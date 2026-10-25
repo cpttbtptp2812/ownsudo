@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: jdbc:mysql://${DB_HOST:agent-mysql}:${DB_PORT:3306}/${DB_NAME:agent_db}?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&characterEncoding=utf8
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:RootPassword2026!}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false

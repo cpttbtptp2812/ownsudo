@@ -1,0 +1,20 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ownsudo-engine
+  profiles:
+    active: local
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    root: INFO
+    com.ownsudo: DEBUG
+    org.hibernate.SQL: WARN
