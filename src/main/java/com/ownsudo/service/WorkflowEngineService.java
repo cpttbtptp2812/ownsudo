@@ -1,6 +1,5 @@
 package com.ownsudo.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ownsudo.dto.CommitApprovalRequest;
 import com.ownsudo.dto.WorkflowEventMessage;
 import com.ownsudo.entity.ApprovalTicket;
@@ -16,6 +15,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -37,101 +37,113 @@ public class WorkflowEngineService {
     @Autowired
     private ApprovalTicketRepository approvalTicketRepository;
 
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    // SSE emitter registry keyed by instanceId
-    private final Map<String, List<SseEmitter>> emitterMap = new ConcurrentHashMap<>();
+    // Map: instanceId -> List of active SseEmitters
+    private final Map<String, List<SseEmitter>> emittersMap = new ConcurrentHashMap<>();
 
     public SseEmitter subscribeStream(String instanceId) {
-        SseEmitter emitter = new SseEmitter(180_000L); // 3 minutes timeout
-        emitterMap.computeIfAbsent(instanceId, k -> new CopyOnWriteArrayList<>()).add(emitter);
+        SseEmitter emitter = new SseEmitter(600_000L); // 10 minutes timeout
+        emittersMap.computeIfAbsent(instanceId, k -> new CopyOnWriteArrayList<>()).add(emitter);
 
         emitter.onCompletion(() -> removeEmitter(instanceId, emitter));
         emitter.onTimeout(() -> removeEmitter(instanceId, emitter));
-        emitter.onError((e) -> removeEmitter(instanceId, emitter));
+        emitter.onError(e -> removeEmitter(instanceId, emitter));
 
-        // Send initial heartbeat
         try {
-            emitter.send(SseEmitter.event().name("INIT").data(new WorkflowEventMessage("INIT", instanceId, null, "CONNECTED", "Stream initialized")));
-        } catch (Exception ignored) {}
+            emitter.send(SseEmitter.event()
+                    .name("INIT")
+                    .data(new WorkflowEventMessage("INIT", instanceId, null, "CONNECTED", "SSE Stream Established")));
+        } catch (IOException e) {
+            emitter.complete();
+        }
 
         return emitter;
     }
 
     private void removeEmitter(String instanceId, SseEmitter emitter) {
-        List<SseEmitter> list = emitterMap.get(instanceId);
+        List<SseEmitter> list = emittersMap.get(instanceId);
         if (list != null) {
             list.remove(emitter);
-            if (list.isEmpty()) {
-                emitterMap.remove(instanceId);
-            }
+            if (list.isEmpty()) emittersMap.remove(instanceId);
         }
     }
 
-    public void broadcastEvent(String instanceId, WorkflowEventMessage event) {
-        List<SseEmitter> list = emitterMap.get(instanceId);
-        if (list != null && !list.isEmpty()) {
-            for (SseEmitter emitter : list) {
-                try {
-                    emitter.send(SseEmitter.event()
-                            .name(event.getEventType())
-                            .data(event));
-                } catch (Exception e) {
-                    emitter.complete();
-                }
+    public void broadcastEvent(String instanceId, WorkflowEventMessage msg) {
+        List<SseEmitter> list = emittersMap.get(instanceId);
+        if (list == null || list.isEmpty()) return;
+
+        List<SseEmitter> deadEmitters = new ArrayList<>();
+        for (SseEmitter emitter : list) {
+            try {
+                emitter.send(SseEmitter.event().name(msg.getEventType()).data(msg));
+            } catch (Exception e) {
+                deadEmitters.add(emitter);
             }
         }
+        list.removeAll(deadEmitters);
     }
 
     /**
-     * Start a new workflow instance execution
+     * Start executing DAG workflow asynchronously
      */
     public WorkflowInstance startWorkflow(String workflowId, String triggeredBy, String inputParams) {
-        String instanceId = "inst-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 4);
-        
+        if (workflowId == null || workflowId.isBlank()) {
+            workflowId = "wf-settlement-migration";
+        }
+        if (triggeredBy == null || triggeredBy.isBlank()) {
+            triggeredBy = "admin_sec";
+        }
+
+        String instanceId = "wf-inst-" + UUID.randomUUID().toString().substring(0, 8);
         WorkflowInstance instance = new WorkflowInstance();
         instance.setId(instanceId);
-        instance.setWorkflowId(workflowId != null ? workflowId : "wf-settlement-migration");
+        instance.setWorkflowId(workflowId);
         instance.setStatus("RUNNING");
-        instance.setTriggeredBy(triggeredBy != null ? triggeredBy : "admin_sec");
-        instance.setContextData(inputParams != null ? inputParams : "{\"txAmount\": 15000000.00, \"currency\": \"CNY\", \"targetDb\": \"mysql://43.142.74.224/agent_db\"}");
-        instance.setCurrentNodeId("node-ingest-spec");
+        instance.setTriggeredBy(triggeredBy);
         instance.setStartedAt(LocalDateTime.now());
-
+        instance.setCurrentNodeId("node-ingest-spec");
+        instance.setInputParams(inputParams);
         instanceRepository.save(instance);
 
-        // Broadcast start event
-        broadcastEvent(instanceId, new WorkflowEventMessage("INSTANCE_STARTED", instanceId, null, "RUNNING", instance));
-
-        // Trigger asynchronous DAG progression
-        executePipelineAsync(instanceId);
-
+        executePipelineAsync(instanceId, workflowId);
         return instance;
     }
 
     @Async
-    public void executePipelineAsync(String instanceId) {
+    public void executePipelineAsync(String instanceId, String workflowId) {
         try {
-            // Step 1: node-ingest-spec
-            executeStep(instanceId, "node-ingest-spec", "交易规范解析与协议合规自检", "POLICY_VERIFICATION", 400, () -> {
-                return Map.of("parsedFields", 14, "complianceRule", "ISO20022_PASS", "ddlTarget", "agent_db.workflow_instance");
-            });
+            broadcastEvent(instanceId, new WorkflowEventMessage("INSTANCE_STARTED", instanceId, null, "RUNNING", "Workflow Instance Initialized"));
 
-            // Step 2: node-risk-analysis
-            executeStep(instanceId, "node-risk-analysis", "大模型风险沙箱与意图影响推演", "LLM_REASONING", 750, () -> {
+            // Step 1: node-ingest-spec
+            executeStep(instanceId, "node-ingest-spec", "交易规范解析与协议合规自检", "POLICY_VERIFICATION", 320, () -> {
                 return Map.of(
-                    "riskScore", 0.94,
-                    "threatCategory", "HIGH_RISK_FINANCIAL_SETTLEMENT",
-                    "reasoningSummary", "检测到单笔超 10,000,000.00 CNY 的资产重分配操作，触发企业 P0 级强制 2PC 双签策略。"
+                    "complianceCheck", "PASSED_ISO20022",
+                    "sourceAccount", "6225 **** **** 9081",
+                    "destinationBank", "ICBKCNSH",
+                    "amount", "50,000,000.00 CNY",
+                    "rulesCount", 14
                 );
             });
 
-            // Step 3: node-2pc-gate -> Zero-Trust Human Approval Suspension
+            // Step 2: node-risk-analysis
+            executeStep(instanceId, "node-risk-analysis", "大模型风险沙箱与意图影响推演", "LLM_REASONING", 850, () -> {
+                return Map.of(
+                    "riskScore", 0.94,
+                    "riskLevel", "CRITICAL_P0",
+                    "reasons", List.of(
+                        "单笔划转金额 > 10,000,000 触发央行反洗钱大额重点监控",
+                        "目标结算清算专户涉及多云异构集群跨网段调度",
+                        "涉及核心账务主库不可逆借贷结转，强制触发两阶段提交 (2PC)"
+                    ),
+                    "model", "deepseek-r1-reasoner",
+                    "policyTriggered", "POLICY_ZERO_TRUST_THRESHOLD"
+                );
+            });
+
+            // Step 3: node-2pc-gate (Zero-Trust Gate - Suspend here!)
             suspendForApprovalGate(instanceId, "node-2pc-gate", "零信任 2PC 人机双签闸口 (Zero-Trust Gate)");
 
         } catch (Exception e) {
-            log.error("Pipeline async execution failed for instance " + instanceId, e);
+            log.error("Workflow execution error for instance " + instanceId, e);
             markInstanceFailed(instanceId, e.getMessage());
         }
     }
@@ -141,26 +153,25 @@ public class WorkflowEngineService {
         instance.setCurrentNodeId(nodeId);
         instanceRepository.save(instance);
 
-        NodeExecution node = new NodeExecution();
-        node.setId("exec-" + UUID.randomUUID().toString().substring(0, 8));
-        node.setInstanceId(instanceId);
-        node.setNodeId(nodeId);
-        node.setNodeName(nodeName);
-        node.setNodeType(nodeType);
-        node.setStatus("RUNNING");
-        node.setStartedAt(LocalDateTime.now());
-        nodeExecutionRepository.save(node);
-
-        WorkflowEventMessage runningMsg = new WorkflowEventMessage("NODE_RUNNING", instanceId, nodeId, "RUNNING", Map.of("nodeName", nodeName));
+        WorkflowEventMessage runningMsg = new WorkflowEventMessage("NODE_RUNNING", instanceId, nodeId, "RUNNING", "Node started");
         runningMsg.setNodeName(nodeName);
         runningMsg.setNodeType(nodeType);
         broadcastEvent(instanceId, runningMsg);
 
         Thread.sleep(latencyMs);
 
-        Object output = supplier.execute();
+        Object result = supplier.execute();
+        String output = result instanceof String ? (String) result : new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(result);
+
+        NodeExecution node = new NodeExecution();
+        node.setId("exec-" + UUID.randomUUID().toString().substring(0, 8));
+        node.setInstanceId(instanceId);
+        node.setNodeId(nodeId);
+        node.setNodeName(nodeName);
+        node.setNodeType(nodeType);
         node.setStatus("SUCCESS");
-        node.setOutputPayload(objectMapper.writeValueAsString(output));
+        node.setOutputPayload(output);
+        node.setStartedAt(LocalDateTime.now().minusNanos(latencyMs * 1_000_000));
         node.setLatencyMs(latencyMs);
         node.setCostTokens((int) (Math.random() * 800 + 400));
         node.setEndedAt(LocalDateTime.now());
@@ -178,7 +189,6 @@ public class WorkflowEngineService {
         instance.setCurrentNodeId(nodeId);
         instanceRepository.save(instance);
 
-        // Create or update NodeExecution
         NodeExecution node = new NodeExecution();
         node.setId("exec-" + UUID.randomUUID().toString().substring(0, 8));
         node.setInstanceId(instanceId);
@@ -189,7 +199,6 @@ public class WorkflowEngineService {
         node.setStartedAt(LocalDateTime.now());
         nodeExecutionRepository.save(node);
 
-        // Generate Zero-Trust 2PC Approval Ticket
         String ticketId = "tkt-" + System.currentTimeMillis();
         ApprovalTicket ticket = new ApprovalTicket();
         ticket.setId(ticketId);
@@ -197,11 +206,10 @@ public class WorkflowEngineService {
         ticket.setNodeId(nodeId);
         ticket.setPolicyLevel("P0_CRITICAL");
         ticket.setRiskScore(0.94);
-        ticket.setOperationSummary("【P0 紧急授权】清算转账金额 ¥15,000,000.00 CNY 至清算保证金池，并执行 MySQL agent_db 表级数据回滚防护索引重构。");
+        ticket.setOperationSummary("【P0 紧急授权】清算转账金额 ¥50,000,000.00 CNY 至清算保证金池，并执行 MySQL agent_db 表级数据回滚防护索引重构。");
         ticket.setStatus("PENDING");
         approvalTicketRepository.save(ticket);
 
-        // Broadcast Gate Notification
         WorkflowEventMessage gateMsg = new WorkflowEventMessage("TICKET_REQUIRED", instanceId, nodeId, "SUSPENDED_APPROVAL", ticket);
         gateMsg.setNodeName(nodeName);
         gateMsg.setNodeType("HUMAN_APPROVAL_2PC");
@@ -210,9 +218,6 @@ public class WorkflowEngineService {
         log.info("Workflow instance {} suspended at 2PC gate with ticket {}", instanceId, ticketId);
     }
 
-    /**
-     * Resume after human commits decision on 2PC ticket
-     */
     public ApprovalTicket commitApproval(String ticketId, CommitApprovalRequest req) {
         ApprovalTicket ticket = approvalTicketRepository.findById(ticketId)
                 .orElseThrow(() -> new IllegalArgumentException("Ticket not found: " + ticketId));
@@ -230,17 +235,15 @@ public class WorkflowEngineService {
         ticket.setAuditReason(req.getAuditReason());
         ticket.setDecidedAt(LocalDateTime.now());
 
-        // Generate SHA-256 digital signature
         String sigInput = ticketId + ":" + req.getOperatorId() + ":" + req.getDecision() + ":" + System.currentTimeMillis();
         ticket.setSignatureHash(sha256(sigInput));
         approvalTicketRepository.save(ticket);
 
         if ("APPROVED".equalsIgnoreCase(req.getDecision())) {
-            // Update node status
             Optional<NodeExecution> optNode = nodeExecutionRepository.findByInstanceIdAndNodeId(instanceId, ticket.getNodeId());
             optNode.ifPresent(n -> {
                 n.setStatus("SUCCESS");
-                n.setOutputPayload("{\"signature\":\"" + ticket.getSignatureHash() + "\",\"operator\":\"" + req.getOperatorId() + "\"}");
+                n.setOutputPayload("{\"signature\":\"" + ticket.getSignatureHash() + "\",\"operator\":\"" + req.getOperatorId() + "\",\"status\":\"APPROVED\"}");
                 n.setEndedAt(LocalDateTime.now());
                 nodeExecutionRepository.save(n);
             });
@@ -249,22 +252,36 @@ public class WorkflowEngineService {
             instanceRepository.save(instance);
 
             broadcastEvent(instanceId, new WorkflowEventMessage("TICKET_APPROVED", instanceId, ticket.getNodeId(), "APPROVED", ticket));
-
-            // Continue downstream nodes asynchronously
             resumePipelineAsync(instanceId);
 
         } else {
-            // Rejected
+            // Saga Rollback compensation on Rejection
             Optional<NodeExecution> optNode = nodeExecutionRepository.findByInstanceIdAndNodeId(instanceId, ticket.getNodeId());
             optNode.ifPresent(n -> {
                 n.setStatus("FAILED");
-                n.setOutputPayload("{\"rejectionReason\":\"" + req.getAuditReason() + "\"}");
+                n.setOutputPayload("{\"rejectionReason\":\"" + req.getAuditReason() + "\",\"sagaRollback\":\"TRIGGERED\"}");
                 n.setEndedAt(LocalDateTime.now());
                 nodeExecutionRepository.save(n);
             });
 
-            markInstanceFailed(instanceId, "2PC Human Gate Rejected by " + req.getOperatorId());
-            broadcastEvent(instanceId, new WorkflowEventMessage("TICKET_REJECTED", instanceId, ticket.getNodeId(), "REJECTED", ticket));
+            // Insert Saga Compensation Record
+            NodeExecution compNode = new NodeExecution();
+            compNode.setId("exec-comp-" + UUID.randomUUID().toString().substring(0, 6));
+            compNode.setInstanceId(instanceId);
+            compNode.setNodeId("saga-compensation-rollback");
+            compNode.setNodeName("Saga 逆向事务补偿回滚");
+            compNode.setNodeType("COMPENSATION_ACTION");
+            compNode.setStatus("COMPENSATED");
+            compNode.setOutputPayload("{\"releasedHoldAmount\":\"¥50,000,000.00\",\"status\":\"ROLLBACK_SUCCESS\"}");
+            compNode.setStartedAt(LocalDateTime.now());
+            compNode.setEndedAt(LocalDateTime.now());
+            nodeExecutionRepository.save(compNode);
+
+            instance.setStatus("REJECTED_ROLLED_BACK");
+            instance.setFinishedAt(LocalDateTime.now());
+            instanceRepository.save(instance);
+
+            broadcastEvent(instanceId, new WorkflowEventMessage("TICKET_REJECTED", instanceId, ticket.getNodeId(), "REJECTED_ROLLED_BACK", ticket));
         }
 
         return ticket;
@@ -274,25 +291,26 @@ public class WorkflowEngineService {
     public void resumePipelineAsync(String instanceId) {
         try {
             // Step 4: node-mcp-sql-exec
-            executeStep(instanceId, "node-mcp-sql-exec", "MCP 协议分布式数据库执行器", "MCP_TOOL_CALL", 920, () -> {
+            executeStep(instanceId, "node-mcp-sql-exec", "MCP 协议分布式数据库执行器", "MCP_TOOL_CALL", 520, () -> {
                 return Map.of(
                     "affectedRows", 1,
                     "targetHost", "43.142.74.224:3306",
-                    "executedSql", "UPDATE agent_db.account_balance SET balance = balance - 15000000.00 WHERE account_id = 'ACC_CORP_01';",
-                    "mcpStatus", "200_OK"
+                    "executedSql", "UPDATE agent_db.account_balance SET balance = balance - 50000000.00 WHERE account_id = 'ACC_CORP_01';",
+                    "mcpStatus", "200_OK",
+                    "isolation", "SERIALIZABLE"
                 );
             });
 
             // Step 5: node-audit-ledger
-            executeStep(instanceId, "node-audit-ledger", "防篡改加密审计凭证存证", "SQL_EXECUTOR", 350, () -> {
+            executeStep(instanceId, "node-audit-ledger", "防篡改加密审计凭证存证", "SQL_EXECUTOR", 220, () -> {
                 return Map.of(
-                    "blockHeight", 894102,
-                    "ledgerHash", "0x" + UUID.randomUUID().toString().replace("-", ""),
-                    "auditProof", "SEC_COMPLIANT_RECORDED"
+                    "blockHeight", 10925,
+                    "ledgerHash", "0x5b6487247985d9d7949f9a04fd038381929b5dc406ca1939bebaae0cbce5b669",
+                    "auditProof", "SEC_COMPLIANT_RECORDED",
+                    "merkleRoot", "0xedc00da816c664bd9c1bdb5d3a1e7b87"
                 );
             });
 
-            // Finish pipeline
             WorkflowInstance instance = instanceRepository.findById(instanceId).orElseThrow();
             instance.setStatus("COMPLETED");
             instance.setFinishedAt(LocalDateTime.now());

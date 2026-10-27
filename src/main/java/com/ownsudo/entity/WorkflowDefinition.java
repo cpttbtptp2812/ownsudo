@@ -20,6 +20,27 @@ public class WorkflowDefinition {
     @Column(length = 32)
     private String version;
 
+    @Column(length = 64)
+    private String category;
+
+    @Column(length = 64)
+    private String badge;
+
+    @Column(length = 32)
+    private String icon;
+
+    @Column(columnDefinition = "LONGTEXT")
+    private String promptTemplate;
+
+    @Column(length = 256)
+    private String tags;
+
+    @Column(nullable = false)
+    private Boolean enabled = true;
+
+    @Column(name = "sort_order")
+    private Integer sortOrder = 0;
+
     @Column(columnDefinition = "LONGTEXT")
     private String topologyJson;
 
@@ -33,6 +54,8 @@ public class WorkflowDefinition {
     public void prePersist() {
         if (createdAt == null) createdAt = LocalDateTime.now();
         if (updatedAt == null) updatedAt = LocalDateTime.now();
+        if (enabled == null) enabled = true;
+        if (sortOrder == null) sortOrder = 0;
     }
 
     @PreUpdate
@@ -50,6 +73,27 @@ public class WorkflowDefinition {
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
+
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
+
+    public String getBadge() { return badge; }
+    public void setBadge(String badge) { this.badge = badge; }
+
+    public String getIcon() { return icon; }
+    public void setIcon(String icon) { this.icon = icon; }
+
+    public String getPromptTemplate() { return promptTemplate; }
+    public void setPromptTemplate(String promptTemplate) { this.promptTemplate = promptTemplate; }
+
+    public String getTags() { return tags; }
+    public void setTags(String tags) { this.tags = tags; }
+
+    public Boolean getEnabled() { return enabled; }
+    public void setEnabled(Boolean enabled) { this.enabled = enabled; }
+
+    public Integer getSortOrder() { return sortOrder; }
+    public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
 
     public String getVersion() { return version; }
     public void setVersion(String version) { this.version = version; }

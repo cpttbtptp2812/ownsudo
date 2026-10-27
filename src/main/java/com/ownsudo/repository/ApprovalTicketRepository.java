@@ -8,6 +8,8 @@ import java.util.Optional;
 
 @Repository
 public interface ApprovalTicketRepository extends JpaRepository<ApprovalTicket, String> {
+    List<ApprovalTicket> findAllByOrderByCreatedAtDesc();
     List<ApprovalTicket> findByStatusOrderByCreatedAtDesc(String status);
     Optional<ApprovalTicket> findByInstanceIdAndNodeId(String instanceId, String nodeId);
+    List<ApprovalTicket> findByInstanceIdOrderByCreatedAtDesc(String instanceId);
 }

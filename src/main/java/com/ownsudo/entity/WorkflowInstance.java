@@ -24,6 +24,9 @@ public class WorkflowInstance {
     private String currentNodeId;
 
     @Column(columnDefinition = "LONGTEXT")
+    private String inputParams;
+
+    @Column(columnDefinition = "LONGTEXT")
     private String contextData;
 
     @Column(name = "started_at")
@@ -53,6 +56,9 @@ public class WorkflowInstance {
 
     public String getCurrentNodeId() { return currentNodeId; }
     public void setCurrentNodeId(String currentNodeId) { this.currentNodeId = currentNodeId; }
+
+    public String getInputParams() { return inputParams; }
+    public void setInputParams(String inputParams) { this.inputParams = inputParams; }
 
     public String getContextData() { return contextData; }
     public void setContextData(String contextData) { this.contextData = contextData; }
