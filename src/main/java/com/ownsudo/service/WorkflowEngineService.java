@@ -1,9 +1,12 @@
 package com.ownsudo.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ownsudo.dto.CommitApprovalRequest;
 import com.ownsudo.dto.WorkflowEventMessage;
 import com.ownsudo.entity.ApprovalTicket;
 import com.ownsudo.entity.NodeExecution;
+import com.ownsudo.entity.WorkflowDefinition;
 import com.ownsudo.entity.WorkflowInstance;
 import com.ownsudo.repository.ApprovalTicketRepository;
 import com.ownsudo.repository.NodeExecutionRepository;
@@ -11,6 +14,7 @@ import com.ownsudo.repository.WorkflowInstanceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -36,6 +40,13 @@ public class WorkflowEngineService {
 
     @Autowired
     private ApprovalTicketRepository approvalTicketRepository;
+
+    @Autowired
+    @Lazy
+    private WorkflowDefinitionService definitionService;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // Map: instanceId -> List of active SseEmitters
     private final Map<String, List<SseEmitter>> emittersMap = new ConcurrentHashMap<>();
@@ -113,7 +124,42 @@ public class WorkflowEngineService {
         try {
             broadcastEvent(instanceId, new WorkflowEventMessage("INSTANCE_STARTED", instanceId, null, "RUNNING", "Workflow Instance Initialized"));
 
-            // Step 1: node-ingest-spec
+            Optional<WorkflowDefinition> optDef = definitionService.getById(workflowId);
+            List<Map<String, Object>> dynamicSteps = Collections.emptyList();
+            if (optDef.isPresent() && optDef.get().getTopologyJson() != null && !optDef.get().getTopologyJson().isBlank()) {
+                try {
+                    dynamicSteps = objectMapper.readValue(optDef.get().getTopologyJson(), new TypeReference<>() {});
+                } catch (Exception e) {
+                    log.warn("Failed to parse dynamic steps for workflow " + workflowId, e);
+                }
+            }
+
+            if (dynamicSteps != null && !dynamicSteps.isEmpty()) {
+                WorkflowInstance inst = instanceRepository.findById(instanceId).orElse(null);
+                String inputParams = inst != null ? inst.getInputParams() : "";
+
+                for (Map<String, Object> step : dynamicSteps) {
+                    String type = String.valueOf(step.getOrDefault("type", ""));
+                    String nodeId = String.valueOf(step.getOrDefault("id", "step-" + System.currentTimeMillis()));
+                    String nodeName = String.valueOf(step.getOrDefault("name", "执行节点"));
+
+                    if ("HITL_APPROVAL".equalsIgnoreCase(type)) {
+                        suspendForApprovalGate(instanceId, nodeId, nodeName.isBlank() ? "2PC 人工安全审批门闩" : nodeName);
+                        return; // 挂起并等待人工审批
+                    } else {
+                        executeDynamicStep(instanceId, step, inputParams);
+                    }
+                }
+
+                WorkflowInstance instance = instanceRepository.findById(instanceId).orElseThrow();
+                instance.setStatus("COMPLETED");
+                instance.setFinishedAt(LocalDateTime.now());
+                instanceRepository.save(instance);
+                broadcastEvent(instanceId, new WorkflowEventMessage("INSTANCE_COMPLETED", instanceId, null, "COMPLETED", instance));
+                return;
+            }
+
+            // 兜底回退
             executeStep(instanceId, "node-ingest-spec", "交易规范解析与协议合规自检", "POLICY_VERIFICATION", 320, () -> {
                 return Map.of(
                     "complianceCheck", "PASSED_ISO20022",
@@ -124,7 +170,6 @@ public class WorkflowEngineService {
                 );
             });
 
-            // Step 2: node-risk-analysis
             executeStep(instanceId, "node-risk-analysis", "大模型风险沙箱与意图影响推演", "LLM_REASONING", 850, () -> {
                 return Map.of(
                     "riskScore", 0.94,
@@ -139,13 +184,50 @@ public class WorkflowEngineService {
                 );
             });
 
-            // Step 3: node-2pc-gate (Zero-Trust Gate - Suspend here!)
             suspendForApprovalGate(instanceId, "node-2pc-gate", "零信任 2PC 人机双签闸口 (Zero-Trust Gate)");
 
         } catch (Exception e) {
             log.error("Workflow execution error for instance " + instanceId, e);
             markInstanceFailed(instanceId, e.getMessage());
         }
+    }
+
+    private void executeDynamicStep(String instanceId, Map<String, Object> step, String inputParams) throws Exception {
+        String nodeId = String.valueOf(step.getOrDefault("id", "step-" + System.currentTimeMillis()));
+        String nodeName = String.valueOf(step.getOrDefault("name", "动态执行节点"));
+        String nodeType = String.valueOf(step.getOrDefault("type", "GENERIC_STEP"));
+        Map<String, Object> config = step.get("config") instanceof Map ? (Map<String, Object>) step.get("config") : Collections.emptyMap();
+
+        long latencyMs = 180 + (long)(Math.random() * 260);
+        executeStep(instanceId, nodeId, nodeName, nodeType, latencyMs, () -> {
+            Map<String, Object> output = new HashMap<>();
+            output.put("nodeId", nodeId);
+            output.put("nodeType", nodeType);
+            output.put("status", "SUCCESS");
+            output.put("timestamp", System.currentTimeMillis());
+
+            if ("INPUT_EXTRACT".equalsIgnoreCase(nodeType)) {
+                output.put("fieldsExtracted", config.getOrDefault("fields", "applicant, amount, department"));
+                output.put("maskApplied", config.getOrDefault("maskSensitive", true));
+                output.put("inputData", inputParams != null && !inputParams.isBlank() ? inputParams : "通用业务输入已解析");
+            } else if ("RULE_CHECK".equalsIgnoreCase(nodeType)) {
+                output.put("ruleEvaluated", config.getOrDefault("ruleExpr", "amount <= 50000"));
+                output.put("complianceResult", "PASSED_GREEN_ZONE");
+                output.put("riskFactor", 0.05);
+            } else if ("HTTP_TOOL".equalsIgnoreCase(nodeType)) {
+                output.put("endpoint", config.getOrDefault("apiUrl", "https://api.internal.com/action"));
+                output.put("method", config.getOrDefault("apiMethod", "POST"));
+                output.put("httpStatus", 200);
+                output.put("responseBody", Map.of("code", 0, "msg", "Success", "bizId", "BIZ-" + System.currentTimeMillis()));
+            } else if ("LLM_REDUCE".equalsIgnoreCase(nodeType)) {
+                output.put("format", config.getOrDefault("outputFormat", "STREAM_TEXT"));
+                output.put("summary", "流水线全部前置节点已成功执行并归一化入库，生成结构化凭据。");
+                output.put("tokenUsage", 280);
+            } else {
+                output.put("result", "Node executed successfully with dynamic config: " + config.keySet());
+            }
+            return output;
+        });
     }
 
     private void executeStep(String instanceId, String nodeId, String nodeName, String nodeType, long latencyMs, StepSupplier supplier) throws Exception {
@@ -205,8 +287,10 @@ public class WorkflowEngineService {
         ticket.setInstanceId(instanceId);
         ticket.setNodeId(nodeId);
         ticket.setPolicyLevel("P0_CRITICAL");
-        ticket.setRiskScore(0.94);
-        ticket.setOperationSummary("【P0 紧急授权】清算转账金额 ¥50,000,000.00 CNY 至清算保证金池，并执行 MySQL agent_db 表级数据回滚防护索引重构。");
+        ticket.setRiskScore(0.85);
+        String bizDesc = instance.getInputParams() != null && !instance.getInputParams().isBlank()
+                ? "，业务数据：" + instance.getInputParams() : "";
+        ticket.setOperationSummary("【安全授权闸口】节点 [" + nodeName + "] 触发安全核验门闩，需专职人员审核放行" + bizDesc);
         ticket.setStatus("PENDING");
         approvalTicketRepository.save(ticket);
 
@@ -272,7 +356,7 @@ public class WorkflowEngineService {
             compNode.setNodeName("Saga 逆向事务补偿回滚");
             compNode.setNodeType("COMPENSATION_ACTION");
             compNode.setStatus("COMPENSATED");
-            compNode.setOutputPayload("{\"releasedHoldAmount\":\"¥50,000,000.00\",\"status\":\"ROLLBACK_SUCCESS\"}");
+            compNode.setOutputPayload("{\"reason\":\"" + req.getAuditReason() + "\",\"status\":\"ROLLBACK_SUCCESS\",\"message\":\"业务执行已安全撤销并完成逆向事务冲正\"}");
             compNode.setStartedAt(LocalDateTime.now());
             compNode.setEndedAt(LocalDateTime.now());
             nodeExecutionRepository.save(compNode);
@@ -290,33 +374,76 @@ public class WorkflowEngineService {
     @Async
     public void resumePipelineAsync(String instanceId) {
         try {
-            // Step 4: node-mcp-sql-exec
-            executeStep(instanceId, "node-mcp-sql-exec", "MCP 协议分布式数据库执行器", "MCP_TOOL_CALL", 520, () -> {
+            WorkflowInstance instance = instanceRepository.findById(instanceId).orElseThrow();
+            String workflowId = instance.getWorkflowId();
+            Optional<WorkflowDefinition> optDef = definitionService.getById(workflowId);
+            List<Map<String, Object>> dynamicSteps = Collections.emptyList();
+            if (optDef.isPresent() && optDef.get().getTopologyJson() != null && !optDef.get().getTopologyJson().isBlank()) {
+                try {
+                    dynamicSteps = objectMapper.readValue(optDef.get().getTopologyJson(), new TypeReference<>() {});
+                } catch (Exception e) {
+                    log.warn("Failed to parse dynamic steps for resume: " + workflowId, e);
+                }
+            }
+
+            if (dynamicSteps != null && !dynamicSteps.isEmpty()) {
+                String currentNodeId = instance.getCurrentNodeId();
+                int startIndex = 0;
+                for (int i = 0; i < dynamicSteps.size(); i++) {
+                    String stepId = String.valueOf(dynamicSteps.get(i).getOrDefault("id", ""));
+                    if (stepId.equals(currentNodeId)) {
+                        startIndex = i + 1;
+                        break;
+                    }
+                }
+
+                String inputParams = instance.getInputParams();
+                for (int i = startIndex; i < dynamicSteps.size(); i++) {
+                    Map<String, Object> step = dynamicSteps.get(i);
+                    String type = String.valueOf(step.getOrDefault("type", ""));
+                    String nodeId = String.valueOf(step.getOrDefault("id", "step-" + System.currentTimeMillis()));
+                    String nodeName = String.valueOf(step.getOrDefault("name", "执行节点"));
+
+                    if ("HITL_APPROVAL".equalsIgnoreCase(type)) {
+                        suspendForApprovalGate(instanceId, nodeId, nodeName.isBlank() ? "2PC 人工安全审批门闩" : nodeName);
+                        return;
+                    } else {
+                        executeDynamicStep(instanceId, step, inputParams);
+                    }
+                }
+
+                WorkflowInstance finishedInstance = instanceRepository.findById(instanceId).orElseThrow();
+                finishedInstance.setStatus("COMPLETED");
+                finishedInstance.setFinishedAt(LocalDateTime.now());
+                instanceRepository.save(finishedInstance);
+
+                broadcastEvent(instanceId, new WorkflowEventMessage("INSTANCE_COMPLETED", instanceId, null, "COMPLETED", finishedInstance));
+                return;
+            }
+
+            // 兜底回退
+            executeStep(instanceId, "node-mcp-sql-exec", "MCP 协议分布式执行器", "MCP_TOOL_CALL", 520, () -> {
                 return Map.of(
                     "affectedRows", 1,
                     "targetHost", "43.142.74.224:3306",
-                    "executedSql", "UPDATE agent_db.account_balance SET balance = balance - 50000000.00 WHERE account_id = 'ACC_CORP_01';",
-                    "mcpStatus", "200_OK",
-                    "isolation", "SERIALIZABLE"
+                    "status", "SUCCESS",
+                    "mcpStatus", "200_OK"
                 );
             });
 
-            // Step 5: node-audit-ledger
-            executeStep(instanceId, "node-audit-ledger", "防篡改加密审计凭证存证", "SQL_EXECUTOR", 220, () -> {
+            executeStep(instanceId, "node-audit-ledger", "防篡改审计存证", "SQL_EXECUTOR", 220, () -> {
                 return Map.of(
-                    "blockHeight", 10925,
-                    "ledgerHash", "0x5b6487247985d9d7949f9a04fd038381929b5dc406ca1939bebaae0cbce5b669",
-                    "auditProof", "SEC_COMPLIANT_RECORDED",
-                    "merkleRoot", "0xedc00da816c664bd9c1bdb5d3a1e7b87"
+                    "ledgerHash", "0x" + UUID.randomUUID().toString().replace("-", ""),
+                    "auditProof", "SEC_COMPLIANT_RECORDED"
                 );
             });
 
-            WorkflowInstance instance = instanceRepository.findById(instanceId).orElseThrow();
-            instance.setStatus("COMPLETED");
-            instance.setFinishedAt(LocalDateTime.now());
-            instanceRepository.save(instance);
+            WorkflowInstance finishedInstance = instanceRepository.findById(instanceId).orElseThrow();
+            finishedInstance.setStatus("COMPLETED");
+            finishedInstance.setFinishedAt(LocalDateTime.now());
+            instanceRepository.save(finishedInstance);
 
-            broadcastEvent(instanceId, new WorkflowEventMessage("INSTANCE_COMPLETED", instanceId, null, "COMPLETED", instance));
+            broadcastEvent(instanceId, new WorkflowEventMessage("INSTANCE_COMPLETED", instanceId, null, "COMPLETED", finishedInstance));
 
         } catch (Exception e) {
             log.error("Resume pipeline failed for " + instanceId, e);
