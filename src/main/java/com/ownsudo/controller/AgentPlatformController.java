@@ -78,7 +78,18 @@ public class AgentPlatformController {
 
     @GetMapping("/agents")
     public List<AgentEntity> getAgents() {
-        return agentRepository.findAllByOrderByCreatedAtDesc();
+        List<AgentEntity> list = agentRepository.findAllByOrderByCreatedAtDesc();
+        int toolCount = (int) toolRepository.count();
+        int kbCount = (int) knowledgeRepository.count();
+        for (AgentEntity a : list) {
+            if (a.getToolsCount() == null || a.getToolsCount() == 0) {
+                a.setToolsCount(toolCount);
+            }
+            if (a.getKbCount() == null || a.getKbCount() == 0) {
+                a.setKbCount(kbCount);
+            }
+        }
+        return list;
     }
 
     @PostMapping("/agents")
@@ -915,7 +926,7 @@ public class AgentPlatformController {
                 resp.put("affectedRows", affected);
                 resp.put("executedSql", ticket.getOperationSummary());
                 resp.put("status", "APPROVED");
-                resp.put("message", "人机协同审批通过：已真实执行数据变更，受影响行数: " + affected);
+                resp.put("message", "管理员审批通过：已安全执行数据变更，受影响行数: " + affected);
             } catch (Exception e) {
                 resp.put("status", "EXECUTION_FAILED");
                 resp.put("error", "执行数据变更异常: " + e.getMessage());
@@ -925,17 +936,35 @@ public class AgentPlatformController {
             ticket.setOperatorId(approver);
             ticket.setDecidedAt(LocalDateTime.now());
             resp.put("status", "REJECTED");
-            resp.put("message", "人机协同审批驳回：高危写操作已被安全阻断并归档");
+            resp.put("message", "管理员审批驳回：变更操作已被安全阻断并归档");
         }
 
         approvalTicketRepository.save(ticket);
+
+        // 同步更新消息表中的 approvalTicketJson，确保刷新页面后审批状态永久保持已审批，不再回显为待审批
+        try {
+            List<ChatMessageEntity> allMsgs = messageRepository.findAll();
+            for (ChatMessageEntity m : allMsgs) {
+                if (m.getApprovalTicketJson() != null && m.getApprovalTicketJson().contains(ticketId)) {
+                    Map<String, Object> tMap = objectMapper.readValue(m.getApprovalTicketJson(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                    tMap.put("status", ticket.getStatus());
+                    tMap.put("operatorId", approver);
+                    tMap.put("decidedAt", LocalDateTime.now().toString());
+                    if ("APPROVED".equals(ticket.getStatus())) {
+                        tMap.put("affectedRows", resp.get("affectedRows"));
+                    }
+                    m.setApprovalTicketJson(objectMapper.writeValueAsString(tMap));
+                    messageRepository.save(m);
+                }
+            }
+        } catch (Exception ignored) {}
 
         // 记入全链路安全审计日志
         AuditLogEntity audit = new AuditLogEntity();
         audit.setId("audit-" + UUID.randomUUID().toString().substring(0, 8));
         audit.setTime(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-        audit.setAgentName("人机审批中枢 (Human-in-the-Loop)");
-        audit.setEventType("HUMAN_APPROVAL_" + ticket.getStatus());
+        audit.setAgentName("安全审批控制台");
+        audit.setEventType("APPROVAL_" + ticket.getStatus());
         audit.setToolName(ticket.getNodeId());
         audit.setParameters("ticketId=" + ticketId + ", sql=" + ticket.getOperationSummary());
         audit.setModel(approver);
