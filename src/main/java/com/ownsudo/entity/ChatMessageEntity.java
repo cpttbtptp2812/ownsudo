@@ -26,6 +26,18 @@ public class ChatMessageEntity {
     @Column(name = "citations_json", columnDefinition = "TEXT")
     private String citationsJson;
 
+    @Column(name = "trace_steps_json", columnDefinition = "LONGTEXT")
+    private String traceStepsJson;
+
+    @Column(name = "tool_calls_json", columnDefinition = "LONGTEXT")
+    private String toolCallsJson;
+
+    @Column(name = "approval_ticket_json", columnDefinition = "LONGTEXT")
+    private String approvalTicketJson;
+
+    @Column(name = "trace_json", columnDefinition = "TEXT")
+    private String traceJson;
+
     private Integer tokens;
 
     @Column(length = 32)
@@ -61,6 +73,18 @@ public class ChatMessageEntity {
 
     public String getCitationsJson() { return citationsJson; }
     public void setCitationsJson(String citationsJson) { this.citationsJson = citationsJson; }
+
+    public String getTraceStepsJson() { return traceStepsJson; }
+    public void setTraceStepsJson(String traceStepsJson) { this.traceStepsJson = traceStepsJson; }
+
+    public String getToolCallsJson() { return toolCallsJson; }
+    public void setToolCallsJson(String toolCallsJson) { this.toolCallsJson = toolCallsJson; }
+
+    public String getApprovalTicketJson() { return approvalTicketJson; }
+    public void setApprovalTicketJson(String approvalTicketJson) { this.approvalTicketJson = approvalTicketJson; }
+
+    public String getTraceJson() { return traceJson; }
+    public void setTraceJson(String traceJson) { this.traceJson = traceJson; }
 
     public Integer getTokens() { return tokens; }
     public void setTokens(Integer tokens) { this.tokens = tokens; }

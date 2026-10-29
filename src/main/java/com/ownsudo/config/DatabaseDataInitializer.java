@@ -12,47 +12,55 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
+/**
+ * 数据库启动初始化类
+ * 
+ * 严格遵循真实业务持久化原则：
+ * 1. 绝不执行 deleteAll() 清空已有数据库；
+ * 2. 仅在库中智能体为 0 时注册一个通用的基础智能体；
+ * 3. 仅在库中工具为 0 时注册系统受控基础工具；
+ * 4. 仅在库中流程定义为 0 时注册标准企业级合规业务流水线（财务、SRE安全、法务合同）；
+ * 5. 仅在库中知识库切片为 0 时持久化企业核心制度（差旅标准、运维规约、合同风控）。
+ */
 @Component
 public class DatabaseDataInitializer implements CommandLineRunner {
 
+    private final AgentRepository agentRepository;
     private final McpToolRepository toolRepository;
     private final WorkflowDefinitionRepository workflowRepository;
-    private final AgentRepository agentRepository;
     private final KnowledgeChunkRepository knowledgeRepository;
 
     public DatabaseDataInitializer(
+            AgentRepository agentRepository,
             McpToolRepository toolRepository,
             WorkflowDefinitionRepository workflowRepository,
-            AgentRepository agentRepository,
-            KnowledgeChunkRepository knowledgeRepository) {
+            KnowledgeChunkRepository knowledgeRepository
+    ) {
+        this.agentRepository = agentRepository;
         this.toolRepository = toolRepository;
         this.workflowRepository = workflowRepository;
-        this.agentRepository = agentRepository;
         this.knowledgeRepository = knowledgeRepository;
     }
 
     @Override
     public void run(String... args) {
-        // 数据库保持完全真实干净，所有实体均由真实数据库持久化，由用户通过界面真实创建、编辑与删除。
-        initRealSystemTools();
-        initRealWorkflows();
-        initRealAgents();
-        initRealKnowledge();
+        initDefaultAgentIfEmpty();
+        initSystemToolsIfEmpty();
+        initDefaultWorkflowsIfEmpty();
+        initDefaultKnowledgeIfEmpty();
     }
 
-    private void initRealAgents() {
+    private void initDefaultAgentIfEmpty() {
         if (agentRepository.count() > 0) return;
 
         AgentEntity a1 = new AgentEntity();
-        a1.setId("agent-1");
-        a1.setName("ownagent 全自主智能中枢");
-        a1.setDescription("具备自主意图分类、插件动态调用、长程记忆与高可用防御的企业中枢");
-        a1.setAvatar("Sparkles");
+        a1.setId("agent-default");
+        a1.setName("企业业务智能助手");
+        a1.setDescription("企业日常业务问答与制度检索助理，可按需配置关联知识库与工具。");
         a1.setModel("deepseek-chat");
-        a1.setTemperature(0.70);
-        a1.setSystemPrompt("你是由 ownagent 驱动的企业级全自主智能中枢。你具备严谨的专业技术架构与业务知识。请直接用条理清晰、自然的语言回答用户提出的各类问题。");
+        a1.setTemperature(0.7);
+        a1.setSystemPrompt("你是企业业务智能助手。请用清晰、准确、通俗自然的语言回答用户的问题，辅助完成日常业务处理。");
         a1.setStatus("PUBLISHED");
         a1.setToolsCount(4);
         a1.setKbCount(3);
@@ -60,178 +68,17 @@ public class DatabaseDataInitializer implements CommandLineRunner {
         a1.setCreatedAt(LocalDateTime.now());
         a1.setUpdatedAt(LocalDateTime.now());
         agentRepository.save(a1);
-
-        AgentEntity a2 = new AgentEntity();
-        a2.setId("agent-2");
-        a2.setName("企业财务与报销风控专家");
-        a2.setDescription("自动化发票核验、对账单红冲核算与三单一致性合规检测");
-        a2.setAvatar("Calculator");
-        a2.setModel("qwen-max");
-        a2.setTemperature(0.20);
-        a2.setSystemPrompt("你是一个严谨的企业财务审计专家，擅长发票比对与高精度金额核算。");
-        a2.setStatus("PUBLISHED");
-        a2.setToolsCount(2);
-        a2.setKbCount(1);
-        a2.setEnableMemory(true);
-        a2.setCreatedAt(LocalDateTime.now());
-        a2.setUpdatedAt(LocalDateTime.now());
-        agentRepository.save(a2);
-
-        AgentEntity a3 = new AgentEntity();
-        a3.setId("agent-3");
-        a3.setName("生产数据库与高可用运维顾问");
-        a3.setDescription("慢查询自动索引推荐、连接池泄露检测与死锁排查");
-        a3.setAvatar("Database");
-        a3.setModel("deepseek-coder");
-        a3.setTemperature(0.10);
-        a3.setSystemPrompt("你是一个资深数据库架构师，专注 PostgreSQL / MySQL 性能优化与故障应急排查。");
-        a3.setStatus("PUBLISHED");
-        a3.setToolsCount(1);
-        a3.setKbCount(1);
-        a3.setEnableMemory(true);
-        a3.setCreatedAt(LocalDateTime.now());
-        a3.setUpdatedAt(LocalDateTime.now());
-        agentRepository.save(a3);
     }
 
-    private void initRealKnowledge() {
-        if (knowledgeRepository.count() > 0) return;
-
-        KnowledgeChunk k1 = new KnowledgeChunk();
-        k1.setId("chunk-sre-ops-001");
-        k1.setDocTitle("数据库安全运维与高危指令规范 (SRE-OPS-001)");
-        k1.setChunkIndex(1);
-        k1.setCategory("SRE_OPS");
-        k1.setKeywords("DROP,TRUNCATE,DELETE,2PC,人机协同,生产安全");
-        k1.setContent("【数据库安全运维军规】\n1. 严禁未经两阶段审批在生产环境执行无 WHERE 子句的 DELETE 或 UPDATE 变更；\n2. 凡涉及 DROP TABLE、TRUNCATE TABLE、ALTER TABLE 加唯一索引等重度 DDL 操作，必须通过 2PC 人机协同门禁进行物理核准；\n3. 数据库查询工具仅限执行受控 SELECT 与 EXPLAIN 语句，单次查询上限不得超过 1000 条。");
-        k1.setCreatedAt(LocalDateTime.now());
-        knowledgeRepository.save(k1);
-
-        KnowledgeChunk k2 = new KnowledgeChunk();
-        k2.setId("chunk-arch-spec-2026");
-        k2.setDocTitle("Java 21 虚拟线程与高并发架构指引 (ARCH-SPEC-2026)");
-        k2.setChunkIndex(1);
-        k2.setCategory("ARCHITECTURE");
-        k2.setKeywords("Java 21,虚拟线程,Pinning,synchronized,ReentrantLock");
-        k2.setContent("【Java 21 虚拟线程架构规范】\n1. 在长耗时 I/O 或数据库网络等待操作中，严禁在 synchronized 代码块或方法内部阻塞，否则会引起载体线程锁定 (Pinning)，导致平台载体线程饥饿；\n2. 推荐使用 java.util.concurrent.locks.ReentrantLock 替代 synchronized；\n3. 避免将虚拟线程放入固定大小的线程池复用，虚拟线程为轻量级协程，应当随用随建。");
-        k2.setCreatedAt(LocalDateTime.now());
-        knowledgeRepository.save(k2);
-
-        KnowledgeChunk k3 = new KnowledgeChunk();
-        k3.setId("chunk-fin-expense-v2");
-        k3.setDocTitle("企业差旅报销与合规风控手册 (FIN-EXPENSE-V2)");
-        k3.setChunkIndex(1);
-        k3.setCategory("FINANCE");
-        k3.setKeywords("差旅报销,一线城市,住宿限额,超标拦截,财务风控");
-        k3.setContent("【企业差旅费用报销标准】\n1. 一线城市（北京、上海、广州、深圳）普通员工住宿报销标准上限为 600 元/间夜；\n2. 交通工具优先选择高铁二等座或经济舱机票；\n3. 超标差额部分系统自动拦截，需发起二级财务特批流程，否则超标部分由员工个人自理。");
-        k3.setCreatedAt(LocalDateTime.now());
-        knowledgeRepository.save(k3);
-    }
-
-    private void initRealWorkflows() {
-        // 若没有业务流水线或者缺少 promptTemplate，则初始化真实可配置业务流水线
-        if (workflowRepository.count() == 0 || !workflowRepository.existsById("wf-sre-patrol")) {
-            WorkflowDefinition w1 = new WorkflowDefinition();
-            w1.setId("wf-sre-patrol");
-            w1.setName("生产巡检与高危变更核准");
-            w1.setCategory("DevOps / SRE 运维");
-            w1.setBadge("SRE 运维高危拦截");
-            w1.setIcon("ShieldCheck");
-            w1.setDescription("规约对齐 → 库表感知 → 高危SQL拦截 → 人机核准 → 物理生效 → 审计归档");
-            w1.setTags("安全规约,工具调用,二阶段拦截,审计闭环");
-            w1.setPromptTemplate("请启动生产环境安全巡检与合规治理流水线：首先检索《数据库安全运维军规》核对变更规范；随后调用 query_enterprise_db 查询当前数据库会话表状态；最后模拟清理未归档的测试会话，验证生产高危指令的人机协同拦截与两阶段提交闭环。");
-            w1.setVersion("v2.1.0");
-            w1.setEnabled(true);
-            w1.setSortOrder(1);
-            w1.setCreatedAt(LocalDateTime.now());
-            w1.setUpdatedAt(LocalDateTime.now());
-            workflowRepository.save(w1);
-
-            WorkflowDefinition w2 = new WorkflowDefinition();
-            w2.setId("wf-arch-virtual-thread");
-            w2.setName("Java 21 架构合规与 Pinning 锁死诊断");
-            w2.setCategory("系统架构深度");
-            w2.setBadge("架构合规审查");
-            w2.setIcon("Zap");
-            w2.setDescription("规范检索 → 吞吐模型 → synchronized锁死诊断 → ReentrantLock改构方案");
-            w2.setTags("Java 21,虚拟线程,规范对齐,耗时瀑布图");
-            w2.setPromptTemplate("依据企业研发中心规范，全面审查 Spring Boot 3 结合 Java 21 虚拟线程的生产落地方案：诊断长耗时 I/O 下 synchronized 的 Pinning 锁死风险，并输出 ReentrantLock 改构与可观测性落地报告。");
-            w2.setVersion("v1.8.0");
-            w2.setEnabled(true);
-            w2.setSortOrder(2);
-            w2.setCreatedAt(LocalDateTime.now());
-            w2.setUpdatedAt(LocalDateTime.now());
-            workflowRepository.save(w2);
-
-            WorkflowDefinition w3 = new WorkflowDefinition();
-            w3.setId("wf-fin-reimbursement");
-            w3.setName("企业员工差旅初审与超标风控单");
-            w3.setCategory("财务合规风控");
-            w3.setBadge("业务风控闭环");
-            w3.setIcon("Briefcase");
-            w3.setDescription("手册比对 → 一线城市限额核算 → 超标差额阻断 → 财务二级审批凭证生成");
-            w3.setTags("财务手册,差额算力,超额拦截,工单交付");
-            w3.setPromptTemplate("请审核员工张三的差旅报销申请（北京出差住宿 980 元/天，高铁二等座 650 元）：依据企业员工差旅手册比对一线城市住宿限额，核算超标金额，并生成财务风控拦截凭证工单。");
-            w3.setVersion("v2.0.0");
-            w3.setEnabled(true);
-            w3.setSortOrder(3);
-            w3.setCreatedAt(LocalDateTime.now());
-            w3.setUpdatedAt(LocalDateTime.now());
-            workflowRepository.save(w3);
-
-            WorkflowDefinition w4 = new WorkflowDefinition();
-            w4.setId("wf-gitops-code-gate");
-            w4.setName("GitOps 代码质量审查与生产门禁");
-            w4.setCategory("研发效能治理");
-            w4.setBadge("代码合规门禁");
-            w4.setIcon("Terminal");
-            w4.setDescription("PR差异拉取 → 锁文件剪枝 → 规约模式匹配 → 阻断合并意见 draft → 审批写回");
-            w4.setTags("GitOps,安全扫描,代码审查,阻断合并");
-            w4.setPromptTemplate("请执行生产发布前的 PR 代码变更安全审查：分析 Pull Request 提交的代码差异，针对未参数化 SQL、硬编码密钥、无界线程池及循环内外部调用进行合规审查，并输出带文件路径与精确行号的拦截意见草案。");
-            w4.setVersion("v1.5.0");
-            w4.setEnabled(true);
-            w4.setSortOrder(4);
-            w4.setCreatedAt(LocalDateTime.now());
-            w4.setUpdatedAt(LocalDateTime.now());
-            workflowRepository.save(w4);
-        }
-
-        // 自动自愈与清洗：将旧库中遗留的“面试/自嗨”标签强制升级为企业级规范业务标签
-        List<WorkflowDefinition> allWfs = workflowRepository.findAll();
-        for (WorkflowDefinition wf : allWfs) {
-            boolean changed = false;
-            if (wf.getBadge() != null && (wf.getBadge().contains("50K") || wf.getBadge().contains("70K") || wf.getBadge().contains("面试") || wf.getBadge().contains("杀手锏") || wf.getBadge().contains("必杀"))) {
-                if ("wf-sre-patrol".equals(wf.getId())) {
-                    wf.setBadge("SRE 运维高危拦截");
-                    wf.setCategory("DevOps / SRE 运维");
-                } else if ("wf-arch-virtual-thread".equals(wf.getId())) {
-                    wf.setBadge("并发架构审查");
-                    wf.setCategory("系统架构深度");
-                } else if ("wf-fin-reimbursement".equals(wf.getId())) {
-                    wf.setBadge("业务风控闭环");
-                    wf.setCategory("财务合规风控");
-                } else {
-                    wf.setBadge("生产合规流");
-                }
-                changed = true;
-            }
-            if (changed) {
-                wf.setUpdatedAt(LocalDateTime.now());
-                workflowRepository.save(wf);
-            }
-        }
-    }
-
-    private void initRealSystemTools() {
+    private void initSystemToolsIfEmpty() {
         if (toolRepository.count() > 0) return;
 
-        // 仅注册 ToolExecutor 中实际真实实现的 4 个安全工具插件，真实标注其功能与参数
         McpTool t1 = new McpTool();
         t1.setId("tool-db-query");
         t1.setServerName("enterprise-database");
         t1.setFunctionName("query_enterprise_db");
-        t1.setDisplayName("企业数据库只读 SQL 查询");
-        t1.setDescription("受控只读 SQL 执行器：执行 SELECT/SHOW/EXPLAIN 查询，带有高危 DDL/DML 安全拦截熔断");
+        t1.setDisplayName("企业数据库只读查询");
+        t1.setDescription("受控只读 SQL 查询：执行只读查询，遇到修改操作自动拦截");
         t1.setCategory("SYSTEM");
         t1.setEnabled(true);
         t1.setParametersSchema("{\n  \"sql\": \"SELECT id, title, created_at FROM chat_session\"\n}");
@@ -241,8 +88,8 @@ public class DatabaseDataInitializer implements CommandLineRunner {
         t2.setId("tool-calc");
         t2.setServerName("math-engine");
         t2.setFunctionName("calculate_expression");
-        t2.setDisplayName("高精度财务与数学计算");
-        t2.setDescription("调用后端 BigDecimal 精度引擎计算数学与财务公式，规避大模型数值幻觉");
+        t2.setDisplayName("高精度数学计算");
+        t2.setDescription("精确计算数学与财务公式");
         t2.setCategory("SYSTEM");
         t2.setEnabled(true);
         t2.setParametersSchema("{\n  \"expression\": \"(18500 * 0.85) + 3200\"\n}");
@@ -252,8 +99,8 @@ public class DatabaseDataInitializer implements CommandLineRunner {
         t3.setId("tool-iban");
         t3.setServerName("finance-validator");
         t3.setFunctionName("validate_iso20022_iban");
-        t3.setDisplayName("ISO 20022 IBAN 账户核验");
-        t3.setDescription("执行银行 IBAN 真实 MOD-97 校验码运算与国家代码格式校验");
+        t3.setDisplayName("银行账户格式核验");
+        t3.setDescription("校验国际银行账号代码合法性");
         t3.setCategory("BUSINESS");
         t3.setEnabled(true);
         t3.setParametersSchema("{\n  \"iban\": \"DE89370400440532013000\"\n}");
@@ -263,11 +110,89 @@ public class DatabaseDataInitializer implements CommandLineRunner {
         t4.setId("tool-tax-credit");
         t4.setServerName("secops-validator");
         t4.setFunctionName("verify_tax_credit_code");
-        t4.setDisplayName("统一社会信用代码 GB32100 核验");
-        t4.setDescription("按照国家 GB 32100-2015 算法加权核验 18 位统一社会信用代码校验位");
+        t4.setDisplayName("企业统一社会信用代码核验");
+        t4.setDescription("校验统一社会信用代码格式规范");
         t4.setCategory("BUSINESS");
         t4.setEnabled(true);
         t4.setParametersSchema("{\n  \"code\": \"91310000775785552L\"\n}");
         toolRepository.save(t4);
     }
+
+    private void initDefaultWorkflowsIfEmpty() {
+        if (workflowRepository.count() > 0) return;
+
+        WorkflowDefinition wf1 = new WorkflowDefinition();
+        wf1.setId("wf-fin-reimbursement");
+        wf1.setName("员工差旅报销初审与限额合规核查");
+        wf1.setCategory("财务合规");
+        wf1.setBadge("合规风控");
+        wf1.setIcon("Briefcase");
+        wf1.setDescription("自动解析报销凭证与明细 → 对标公司差旅制度限额 → 超标金额自动拦截并生成审批工单 → 审计存证入库");
+        wf1.setTags("财务制度, 费用初审, 限额核算, 审批工单");
+        wf1.setPromptTemplate("请审核此笔差旅报销申请：核验住宿与交通明细，依据公司差旅手册比对住宿限额标准，若存在超标情况自动提醒并生成复核工单。");
+        wf1.setVersion("v2.0.0");
+        wf1.setEnabled(true);
+        wf1.setTopologyJson("[{\"id\":\"step-fin-extract\",\"name\":\"1. 报销凭证参数提取与脱敏\",\"type\":\"INPUT_EXTRACT\",\"config\":{\"fields\":\"applicant, amount, city, hotel_fee\",\"maskSensitive\":true}},{\"id\":\"step-fin-rule\",\"name\":\"2. 差旅合规标准规则校验\",\"type\":\"RULE_CHECK\",\"config\":{\"ruleExpr\":\"amount <= 600\",\"boundDoc\":\"企业员工差旅报销与合规手册\"}},{\"id\":\"step-fin-hitl\",\"name\":\"3. 财务主管人工复核闸口\",\"type\":\"HITL_APPROVAL\",\"config\":{\"approverRole\":\"财务主管\",\"timeoutSeconds\":3600}},{\"id\":\"step-fin-api\",\"name\":\"4. 财务核销系统接口同步\",\"type\":\"HTTP_TOOL\",\"config\":{\"apiUrl\":\"http://localhost:8080/api/health\",\"apiMethod\":\"GET\"}},{\"id\":\"step-fin-audit\",\"name\":\"5. 全流程防篡改审计存证\",\"type\":\"LLM_REDUCE\",\"config\":{\"outputFormat\":\"STRUCTURED_AUDIT\"}}]");
+        workflowRepository.save(wf1);
+
+        WorkflowDefinition wf2 = new WorkflowDefinition();
+        wf2.setId("wf-sre-patrol");
+        wf2.setName("生产系统安全巡检与高危变更核准");
+        wf2.setCategory("系统运维");
+        wf2.setBadge("生产安全");
+        wf2.setIcon("ShieldCheck");
+        wf2.setDescription("解析运维指令与目标资源 → 校验物理只读权限白名单 → 检测 DROP/DELETE 危险变更并强行阻断 → 调度工单审批");
+        wf2.setTags("安全规范, 受控执行, 高危阻断, 物理隔离");
+        wf2.setPromptTemplate("请检查生产数据库状态：首先核对数据库安全规范，然后查询当前会话表状态；若包含删除或修改等危险操作，自动暂停并提交管理员人工审批。");
+        wf2.setVersion("v2.1.0");
+        wf2.setEnabled(true);
+        wf2.setTopologyJson("[{\"id\":\"step-sre-extract\",\"name\":\"1. 运维指令解析与意图识别\",\"type\":\"INPUT_EXTRACT\",\"config\":{\"fields\":\"applicant, targetDb, action\",\"maskSensitive\":true}},{\"id\":\"step-sre-rule\",\"name\":\"2. 变更风险等级与规则裁决\",\"type\":\"RULE_CHECK\",\"config\":{\"ruleExpr\":\"action != 'DROP_TABLE' && amount <= 50000\"}},{\"id\":\"step-sre-hitl\",\"name\":\"3. 技术总监高危操作授权闸口\",\"type\":\"HITL_APPROVAL\",\"config\":{\"approverRole\":\"技术总监\",\"timeoutSeconds\":1800}},{\"id\":\"step-sre-api\",\"name\":\"4. 数据库安全网关受控下发\",\"type\":\"HTTP_TOOL\",\"config\":{\"apiUrl\":\"http://localhost:8080/api/health\",\"apiMethod\":\"GET\"}},{\"id\":\"step-sre-audit\",\"name\":\"5. SRE 运维操作日志防篡改存证\",\"type\":\"LLM_REDUCE\",\"config\":{\"outputFormat\":\"STRUCTURED_AUDIT\"}}]");
+        workflowRepository.save(wf2);
+
+        WorkflowDefinition wf3 = new WorkflowDefinition();
+        wf3.setId("wf-legal-contract");
+        wf3.setName("商业采购合同穿透合规与付款初审");
+        wf3.setCategory("合同法务");
+        wf3.setBadge("法务合规");
+        wf3.setIcon("FileText");
+        wf3.setDescription("合同核心条款要素提取 → 比对法务库知识库标准与账期限制 → 大额预付条款高危预警 → 归档存证");
+        wf3.setTags("合同审查, 账期核对, 预付款风控, 法务留痕");
+        wf3.setPromptTemplate("全面审查商业采购合同与付款事项：核对合同金额、预付款比例与账期，对大额支出或条款不符事项进行提示，人工确认后生成归档报告。");
+        wf3.setVersion("v2.0.0");
+        wf3.setEnabled(true);
+        wf3.setTopologyJson("[{\"id\":\"step-legal-extract\",\"name\":\"1. 合同文本关键要素抽取\",\"type\":\"INPUT_EXTRACT\",\"config\":{\"fields\":\"partner, totalAmount, prepaymentRatio\",\"maskSensitive\":true}},{\"id\":\"step-legal-rule\",\"name\":\"2. 法务合规规则与账期校验\",\"type\":\"RULE_CHECK\",\"config\":{\"ruleExpr\":\"prepaymentRatio <= 0.3 && totalAmount <= 200000\"}},{\"id\":\"step-legal-hitl\",\"name\":\"3. 法务负责人合规复核签章\",\"type\":\"HITL_APPROVAL\",\"config\":{\"approverRole\":\"法务主管\",\"timeoutSeconds\":7200}},{\"id\":\"step-legal-api\",\"name\":\"4. ERP 采购系统数据校验\",\"type\":\"HTTP_TOOL\",\"config\":{\"apiUrl\":\"http://localhost:8080/api/health\",\"apiMethod\":\"GET\"}},{\"id\":\"step-legal-audit\",\"name\":\"5. 合同合规审查存证归档\",\"type\":\"LLM_REDUCE\",\"config\":{\"outputFormat\":\"STRUCTURED_AUDIT\"}}]");
+        workflowRepository.save(wf3);
+    }
+
+    private void initDefaultKnowledgeIfEmpty() {
+        if (knowledgeRepository.count() > 0) return;
+
+        KnowledgeChunk k1 = new KnowledgeChunk();
+        k1.setId("chunk-default-fin");
+        k1.setDocTitle("企业员工差旅报销与合规手册");
+        k1.setChunkIndex(0);
+        k1.setCategory("FINANCE");
+        k1.setKeywords("差旅报销, 一线城市, 住宿标准, 超标提醒, 财务审核");
+        k1.setContent("# 企业员工差旅报销制度\n\n## 1. 住宿标准与报销限额\n- 一线城市（北京、上海、广州、深圳）普通员工住宿报销标准上限为 600 元/间夜。\n- 新一线城市及省会城市住宿报销标准上限为 450 元/间夜。\n- 其余城市住宿报销标准上限为 300 元/间夜。\n\n## 2. 交通工具出行规范\n- 跨城交通优先选择高铁二等座或经济舱机票。\n- 严禁未经前置特批私自乘坐商务座或头等舱。\n\n## 3. 超标拦截与审批流程\n- 超标差额部分系统自动拦截预警，需发起二级财务特批流程。\n- 特批未获批准的，超标部分由员工个人自理。");
+        knowledgeRepository.save(k1);
+
+        KnowledgeChunk k2 = new KnowledgeChunk();
+        k2.setId("chunk-default-sre");
+        k2.setDocTitle("生产系统安全运维规约");
+        k2.setChunkIndex(0);
+        k2.setCategory("SRE_OPS");
+        k2.setKeywords("DROP, TRUNCATE, DELETE, 人工审批, 数据安全");
+        k2.setContent("# 生产系统安全运维规约\n\n## 1. 生产数据操作红线\n- 严禁未经管理员审批在生产环境执行无 WHERE 条件的 DELETE 或 UPDATE 变更。\n- 单次批量删除或修改超过 1000 行记录，必须提前备份并提交审批。\n\n## 2. 高危 DDL 操作审批\n- 凡涉及 DROP TABLE、TRUNCATE TABLE、ALTER TABLE 加唯一索引等重度操作，必须通过管理员人工审批放行。\n- 变更必须在业务低峰期（凌晨 00:00 - 06:00）窗口内执行。\n\n## 3. 查询操作受控\n- 数据库查询工具仅限执行受控 SELECT 查询与 EXPLAIN 分析。\n- 单次查询结果上限不得超过 1000 条，禁止 SELECT * 跨大表扫描。");
+        knowledgeRepository.save(k2);
+
+        KnowledgeChunk k3 = new KnowledgeChunk();
+        k3.setId("chunk-default-legal");
+        k3.setDocTitle("企业商务合同与付款风控规范");
+        k3.setChunkIndex(0);
+        k3.setCategory("LEGAL");
+        k3.setKeywords("合同审核, 单笔付款, 合规审查, 法务审批");
+        k3.setContent("# 企业合同与付款风控规约\n\n## 1. 付款金额分级风控\n- 单笔金额超过人民币 50,000 元的支出类合同，严禁直接自动支付，必须附带法务初审意见与复核凭据。\n- 超过人民币 200,000 元的重大采购，必须由财务总监与业务主管双人联合审批。\n\n## 2. 预付款与违约金条款\n- 凡涉及预付款比例超过总标的 30% 的协议，系统必须提醒合规预警并提交法务特批。\n- 合同履约保证金比例不应低于 10%，账期要求不少于 30 个工作日。\n\n## 3. 印章与签署安全\n- 涉及加盖公章与法人章的授权指令，严禁在未完成审批的情况下执行。");
+        knowledgeRepository.save(k3);
+    }
 }
+

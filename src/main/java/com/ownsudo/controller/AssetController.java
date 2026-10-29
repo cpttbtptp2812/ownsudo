@@ -74,7 +74,7 @@ public class AssetController {
      * MCP 宸ュ叿娉ㄥ唽琛?API: 鏁版嵁搴撶洿鍑?     */
     @GetMapping("/tools")
     public List<McpTool> getTools() {
-        return toolRepository.findByEnabledTrue();
+        return toolRepository.findAll();
     }
 
     /**

@@ -55,6 +55,9 @@ public class WorkflowController {
     private MerkleLedgerService merkleLedgerService;
 
     @Autowired
+    private com.ownsudo.repository.MerkleBlockRepository merkleBlockRepository;
+
+    @Autowired
     private WorkflowPlannerService plannerService;
 
     @Autowired
@@ -100,7 +103,7 @@ public class WorkflowController {
         return instanceRepository.findTop20ByOrderByStartedAtDesc();
     }
 
-    @GetMapping("/instances/{id}")
+    @GetMapping({"/instances/{id}", "/instance/{id}"})
     public ResponseEntity<Map<String, Object>> getInstanceDetails(@PathVariable String id) {
         return instanceRepository.findById(id).map(inst -> {
             List<NodeExecution> steps = nodeExecutionRepository.findByInstanceIdOrderByStartedAtAsc(id);
@@ -209,13 +212,11 @@ public class WorkflowController {
     }
 
     /**
-     * 阶段五：默克尔不可篡改区块链账本视图
+     * 阶段五：默克尔不可篡改区块链账本视图（真实从数据库加载区块）
      */
     @GetMapping("/ledger/blocks")
     public ResponseEntity<?> getLedgerBlocks() {
-        return ResponseEntity.ok(Map.of("ok", true, "blocks", List.of(
-            Map.of("blockHeight", 10925, "merkleRoot", "0x5b6487247985d9d7949f9a04fd038381929b5dc406ca1939bebaae0cbce5b669", "status", "SEALED", "txCount", 5)
-        )));
+        return ResponseEntity.ok(Map.of("ok", true, "blocks", merkleBlockRepository.findTop20ByOrderByBlockHeightDesc()));
     }
 
     /**

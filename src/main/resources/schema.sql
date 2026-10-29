@@ -113,12 +113,30 @@ CREATE TABLE IF NOT EXISTS workflow_definition (
     id VARCHAR(64) PRIMARY KEY,
     name VARCHAR(128) NOT NULL,
     description TEXT,
+    version VARCHAR(32) DEFAULT 'v1.0.0',
+    category VARCHAR(64),
+    badge VARCHAR(64),
+    icon VARCHAR(32),
+    prompt_template LONGTEXT,
+    tags VARCHAR(256),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INT DEFAULT 0,
+    topology_json LONGTEXT,
     dsl_json LONGTEXT,
-    version INT DEFAULT 1,
     status VARCHAR(32) DEFAULT 'ACTIVE',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE workflow_definition ADD COLUMN IF NOT EXISTS version VARCHAR(32) DEFAULT 'v1.0.0';
+ALTER TABLE workflow_definition ADD COLUMN IF NOT EXISTS category VARCHAR(64);
+ALTER TABLE workflow_definition ADD COLUMN IF NOT EXISTS badge VARCHAR(64);
+ALTER TABLE workflow_definition ADD COLUMN IF NOT EXISTS icon VARCHAR(32);
+ALTER TABLE workflow_definition ADD COLUMN IF NOT EXISTS prompt_template LONGTEXT;
+ALTER TABLE workflow_definition ADD COLUMN IF NOT EXISTS tags VARCHAR(256);
+ALTER TABLE workflow_definition ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE;
+ALTER TABLE workflow_definition ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0;
+ALTER TABLE workflow_definition ADD COLUMN IF NOT EXISTS topology_json LONGTEXT;
 
 -- 10. 工作流运行实例表 (Workflow Instance)
 CREATE TABLE IF NOT EXISTS workflow_instance (

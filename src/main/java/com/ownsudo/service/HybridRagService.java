@@ -103,6 +103,38 @@ public class HybridRagService {
         }
     }
 
+    public static class SearchResult {
+        private final List<RagChunk> chunks;
+        private final int totalDocs;
+        private final int bm25Candidates;
+        private final int noiseFiltered;
+        private final int validCount;
+        private final long costMs;
+        private final boolean isRealVector;
+        private final String mode;
+
+        public SearchResult(List<RagChunk> chunks, int totalDocs, int bm25Candidates, int noiseFiltered,
+                            int validCount, long costMs, boolean isRealVector, String mode) {
+            this.chunks = chunks != null ? chunks : Collections.emptyList();
+            this.totalDocs = totalDocs;
+            this.bm25Candidates = bm25Candidates;
+            this.noiseFiltered = noiseFiltered;
+            this.validCount = validCount;
+            this.costMs = costMs;
+            this.isRealVector = isRealVector;
+            this.mode = mode;
+        }
+
+        public List<RagChunk> getChunks() { return chunks; }
+        public int getTotalDocs() { return totalDocs; }
+        public int getBm25Candidates() { return bm25Candidates; }
+        public int getNoiseFiltered() { return noiseFiltered; }
+        public int getValidCount() { return validCount; }
+        public long getCostMs() { return costMs; }
+        public boolean isRealVector() { return isRealVector; }
+        public String getMode() { return mode; }
+    }
+
     /**
      * 【长文本切片工程】
      * 规则：优先按段落换行 \n\n 寻找切分点；超长按句号。！等标点截断；50 字符 Overlap 避免语义断裂。
@@ -244,8 +276,19 @@ public class HybridRagService {
      * 阶段三: 先丢掉余弦低于 0.65 的噪音切片；仅对通过阈值的高置信切片进行 RRF 融合打分并取 Top-K。
      */
     public List<RagChunk> hybridSearch(String rawQuery, int limit) {
+        return hybridSearchWithStats(rawQuery, limit).getChunks();
+    }
+
+    /**
+     * 【两阶段混合检索（带完整审计统计）】
+     * 阶段一: 粗筛全库不含 embedding_json 的轻量元数据，以全库真实文档数做 N 计算 BM25，
+     *         筛选 BM25 > 0 的前 50 个 ID；若关键词一个都没命中，坚决返回空。
+     * 阶段二: 仅对这 50 个切片回表查询 embedding_json 并在内存中计算余弦相似度。
+     * 阶段三: 先硬过滤低于 0.65 的噪音切片；仅对通过阈值的高置信切片进行 RRF 融合打分并取 Top-K。
+     */
+    public SearchResult hybridSearchWithStats(String rawQuery, int limit) {
         if (rawQuery == null || rawQuery.trim().isEmpty()) {
-            return Collections.emptyList();
+            return new SearchResult(Collections.emptyList(), 0, 0, 0, 0, 0, false, "EMPTY_QUERY");
         }
 
         long searchStart = System.currentTimeMillis();
@@ -254,7 +297,7 @@ public class HybridRagService {
         // 1. 查出不含 embedding_json 的轻量字段 (全库条数做 N)
         List<com.ownsudo.dto.ChunkMetadata> allMeta = knowledgeChunkRepository.findAllLightweightChunks();
         if (allMeta == null || allMeta.isEmpty()) {
-            return Collections.emptyList();
+            return new SearchResult(Collections.emptyList(), 0, 0, 0, 0, 0, false, "NO_DATA");
         }
 
         long bm25Start = System.currentTimeMillis();
@@ -274,7 +317,7 @@ public class HybridRagService {
         if (bm25Scores.isEmpty()) {
             long totalCost = System.currentTimeMillis() - searchStart;
             System.out.println("[HybridRAG] 关键词未命中任何切片 (BM25=0)，直接返回空，总耗时: " + totalCost + "ms");
-            return Collections.emptyList();
+            return new SearchResult(Collections.emptyList(), allMeta.size(), 0, 0, 0, totalCost, false, "BM25_ZERO");
         }
 
         // 按 BM25 得分从高到低排序，取得分大于 0 的前 50 个 ID
@@ -292,7 +335,7 @@ public class HybridRagService {
         long dbFetchCost = System.currentTimeMillis() - dbFetchStart;
 
         if (candidateChunks.isEmpty()) {
-            return Collections.emptyList();
+            return new SearchResult(Collections.emptyList(), allMeta.size(), top50Ids.size(), 0, 0, System.currentTimeMillis() - searchStart, false, "CANDIDATE_EMPTY");
         }
 
         // 3. 计算向量余弦相似度 (Query 算一次向量，候选切片读库中预存 embedding)
@@ -321,19 +364,22 @@ public class HybridRagService {
 
         // 4. 【关键修复】：若具备有效向量计算，先硬过滤掉低于 0.65 的噪音切片；若无外部向量模型，则走纯 BM25 稀疏高置信度召回
         List<KnowledgeChunk> highConfCandidates;
+        int noiseFiltered = 0;
         if (isRealVector) {
             highConfCandidates = candidateChunks.stream()
                     .filter(c -> denseScores.getOrDefault(c.getId(), 0.0) >= COSINE_THRESHOLD)
                     .toList();
+            noiseFiltered = candidateChunks.size() - highConfCandidates.size();
         } else {
             // 降级模式：无外部向量服务时，由纯 BM25 稀疏检索保障真实业务召回
             highConfCandidates = candidateChunks;
+            noiseFiltered = 0;
         }
 
         if (highConfCandidates.isEmpty()) {
             long totalCost = System.currentTimeMillis() - searchStart;
             System.out.println("[HybridRAG] BM25 粗筛命中 " + candidateChunks.size() + " 条，但余弦相似度均低于 0.65 阈值，判定为噪音全部过滤，总耗时: " + totalCost + "ms");
-            return Collections.emptyList();
+            return new SearchResult(Collections.emptyList(), allMeta.size(), candidateChunks.size(), candidateChunks.size(), 0, totalCost, isRealVector, isRealVector ? "ALL_NOISE_FILTERED" : "BM25_EMPTY");
         }
 
         // 5. 对通过了 0.65 阈值的优质切片做 RRF 融合排序
@@ -382,7 +428,7 @@ public class HybridRagService {
         long totalCost = System.currentTimeMillis() - searchStart;
         System.out.println("[HybridRAG] 两阶段检索完成: 全库=" + allMeta.size() + "片, BM25粗筛=" + top50Ids.size() + "片 (耗时" + bm25Cost + "ms), 回表读取=" + candidateChunks.size() + "片 (耗时" + dbFetchCost + "ms), 向量精排 (耗时" + vectorCost + "ms), 0.65阈值后有效=" + highConfCandidates.size() + "片, 最终Top=" + topResults.size() + "片, 总耗时: " + totalCost + "ms");
 
-        return topResults;
+        return new SearchResult(topResults, allMeta.size(), candidateChunks.size(), noiseFiltered, highConfCandidates.size(), totalCost, isRealVector, isRealVector ? "HYBRID_COSINE" : "BM25_MATCH");
     }
 
     /**

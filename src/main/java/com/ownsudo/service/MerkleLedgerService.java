@@ -26,7 +26,23 @@ public class MerkleLedgerService {
         List<Map<String, Object>> leaves = new ArrayList<>();
         List<String> hashes = new ArrayList<>();
 
-        long blockHeight = 10000L + Math.abs(instanceId.hashCode() % 50000);
+        Optional<MerkleBlock> existingBlock = blockRepository.findByInstanceId(instanceId);
+        long blockHeight;
+        String prevHash;
+
+        if (existingBlock.isPresent()) {
+            blockHeight = existingBlock.get().getBlockHeight();
+            prevHash = existingBlock.get().getPreviousHash();
+        } else {
+            Optional<MerkleBlock> lastBlock = blockRepository.findFirstByOrderByBlockHeightDesc();
+            if (lastBlock.isPresent()) {
+                blockHeight = lastBlock.get().getBlockHeight() + 1L;
+                prevHash = lastBlock.get().getMerkleRoot();
+            } else {
+                blockHeight = 1L;
+                prevHash = "0x0000000000000000000000000000000000000000000000000000000000000000";
+            }
+        }
 
         for (int i = 0; i < steps.size(); i++) {
             NodeExecution s = steps.get(i);
@@ -62,13 +78,13 @@ public class MerkleLedgerService {
 
         String merkleRoot = calculateMerkleRoot(hashes);
 
-        // Persist block to DB if not present
+        // 真实区块链哈希指针：后一个区块直接引用前一个区块的 Merkle Root
         if (!blockRepository.existsById(blockHeight)) {
             MerkleBlock block = new MerkleBlock();
             block.setBlockHeight(blockHeight);
             block.setMerkleRoot(merkleRoot);
             block.setInstanceId(instanceId);
-            block.setPreviousHash("0x" + sha256("PREV_BLOCK_" + (blockHeight - 1)));
+            block.setPreviousHash(prevHash);
             block.setTxCount(steps.size());
             block.setStatus("SEALED");
             block.setSealedAt(LocalDateTime.now());

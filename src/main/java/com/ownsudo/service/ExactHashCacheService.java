@@ -142,7 +142,7 @@ public class ExactHashCacheService {
             item.put("lastHitAt", e.getLastHitAt() != null ? e.getLastHitAt().toString() : "");
             entryList.add(item);
 
-            long savedPerHit = Math.max(0, (e.getOriginalDurationMs() != null ? e.getOriginalDurationMs() : 1000) - 15);
+            long savedPerHit = Math.max(0, (e.getOriginalDurationMs() != null ? e.getOriginalDurationMs() : 1000) - 2);
             totalSavedMs += savedPerHit * e.getHitCount();
         }
 
@@ -151,6 +151,8 @@ public class ExactHashCacheService {
         stats.put("totalHits", totalHits);
         stats.put("totalSavedTokens", totalSavedTokens);
         stats.put("estimatedSavedCny", estimatedSavedCny);
+        stats.put("isEstimatedBilling", true);
+        stats.put("billingNotice", "基于通义/DeepSeek标准公有云刊例价估算(约¥0.01/1k tk)，非第三方云服务商真实账单账期接口");
         stats.put("totalSavedLatencySeconds", Math.round(totalSavedMs / 1000.0 * 10.0) / 10.0);
         stats.put("topEntries", entryList);
         stats.put("timestamp", LocalDateTime.now().toString());

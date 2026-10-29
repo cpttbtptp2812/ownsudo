@@ -22,6 +22,10 @@ import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
+
 
 @RestController
 @RequestMapping("/api")
@@ -161,6 +165,9 @@ public class AgentPlatformController {
         emitter.onError(e -> isClientConnected.set(false));
 
         executor.submit(() -> {
+            Map<Integer, Object> traceStepsMap = new ConcurrentHashMap<>();
+            List<Map<String, Object>> toolCallsList = new CopyOnWriteArrayList<>();
+            AtomicReference<Object> approvalTicketRef = new AtomicReference<>(null);
             try {
                 ChatMessageEntity userMsg = new ChatMessageEntity();
                 userMsg.setId("msg-" + UUID.randomUUID().toString().substring(0, 8));
@@ -170,10 +177,36 @@ public class AgentPlatformController {
                 userMsg.setTokens(0);
                 messageRepository.save(userMsg);
 
-                // 1.5. 精确哈希降本缓存前置拦截 (Exact Hash Cache Check - 0 Token / 15ms 返回)
+                Boolean enableRag = (Boolean) req.getOrDefault("enableRAG", true);
+                Boolean enableThinking = (Boolean) req.getOrDefault("enableThinking", true);
+                Boolean enableWebSearch = (Boolean) req.getOrDefault("enableWebSearch", false);
+
+                String promptHashKey = exactHashCacheService.computeSha256(exactHashCacheService.normalizePrompt(messageText));
+
+                // 实时下发步骤 1: 客户端发起请求解析 (使前端在请求开始即能获得真实规范哈希指纹与配置)
+                sendTraceStep(emitter, isClientConnected, traceStepsMap, 1, "CLIENT_REQUEST", "客户端发起请求与参数设定", "DONE", Map.of(
+                    "model", rawModel != null ? rawModel : "qwen-max",
+                    "hashKey", promptHashKey,
+                    "sessionId", sessionId,
+                    "enableRAG", enableRag,
+                    "enableThinking", enableThinking,
+                    "enableWebSearch", enableWebSearch,
+                    "userPrompt", messageText
+                ));
+
+                // 1.5. 精确哈希降本缓存前置拦截 (Exact Hash Cache Check - 0 Token 极速返回)
                 com.ownsudo.entity.PromptHashCacheEntity cached = exactHashCacheService.lookupAndHit(messageText);
+
+                // 实时下发步骤 2: 降本哈希排查
+                long hitDurationMs = cached != null ? Math.max(1, System.currentTimeMillis() - startTime) : (System.currentTimeMillis() - startTime);
+                sendTraceStep(emitter, isClientConnected, traceStepsMap, 2, "FINOPS_CACHE", "降本哈希排查", cached != null ? "HIT" : "MISS", Map.of(
+                    "hashKey", promptHashKey,
+                    "cached", cached != null,
+                    "durationMs", hitDurationMs,
+                    "savedTokens", cached != null && cached.getOriginalTokens() != null ? cached.getOriginalTokens() : 0
+                ));
+
                 if (cached != null) {
-                    long hitDurationMs = Math.max(12, System.currentTimeMillis() - startTime);
                     String durationStr = String.format(Locale.US, "%.2fs", hitDurationMs / 1000.0);
 
                     // A. 若原始记录包含知识库切片引用，下发 citations
@@ -184,7 +217,7 @@ public class AgentPlatformController {
                     }
 
                     // B. 推送缓存命中标记到 reasoning
-                    String cacheBanner = "> [⚡ 精确哈希降本缓存命中]\n> - 签名校验：SHA-256 (" + cached.getHashKey().substring(0, 12) + "...)\n> - 响应延迟：" + hitDurationMs + "ms (免除上游网络 RTT)\n> - 算力节省：本次消耗 0 Token (历史生成消耗 " + cached.getOriginalTokens() + " tk)\n\n";
+                    String cacheBanner = "> 与历史相同问题，已直接返回答案（未再调用模型）。\n\n";
                     try {
                         emitter.send(SseEmitter.event().name("reasoning").data(cacheBanner + (cached.getReasoning() != null ? cached.getReasoning() : "")));
                     } catch (Exception ignored) {}
@@ -205,6 +238,14 @@ public class AgentPlatformController {
                     asstMsg.setDuration(durationStr);
                     asstMsg.setIsCached(true);
                     asstMsg.setCitationsJson(cached.getCitationsJson());
+                    try {
+                        asstMsg.setTraceStepsJson(objectMapper.writeValueAsString(traceStepsMap));
+                        Map<String, Object> traceSummary = new LinkedHashMap<>();
+                        traceSummary.put("cached", true);
+                        traceSummary.put("totalMs", hitDurationMs);
+                        traceSummary.put("tokens", 0);
+                        asstMsg.setTraceJson(objectMapper.writeValueAsString(traceSummary));
+                    } catch (Exception ignored) {}
                     messageRepository.save(asstMsg);
 
                     // E. 写入真实审计对账日志
@@ -224,10 +265,11 @@ public class AgentPlatformController {
                     // F. 完成事件下发，携带真实 Trace 数据
                     Map<String, Object> traceMap = new LinkedHashMap<>();
                     traceMap.put("totalMs", hitDurationMs);
-                    traceMap.put("ragMs", 1);
+                    traceMap.put("ragMs", 0);
                     traceMap.put("ttftMs", hitDurationMs);
                     traceMap.put("streamMs", 0);
                     traceMap.put("cached", true);
+                    traceMap.put("hitType", "EXACT_HASH_HIT");
                     traceMap.put("savedTokens", cached.getOriginalTokens() != null ? cached.getOriginalTokens() : 0);
                     traceMap.put("savedMs", cached.getOriginalDurationMs() != null ? cached.getOriginalDurationMs() : 1000);
                     traceMap.put("hashKey", cached.getHashKey());
@@ -238,6 +280,13 @@ public class AgentPlatformController {
                     finishPayload.put("cached", true);
                     finishPayload.put("savedTokens", cached.getOriginalTokens() != null ? cached.getOriginalTokens() : 0);
                     finishPayload.put("trace", traceMap);
+
+                    // 实时下发步骤 6 完成
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 6, "LLM_RESPONSE", "结果组装与交付", "DONE", Map.of(
+                        "totalMs", hitDurationMs,
+                        "tokens", 0,
+                        "duration", durationStr
+                    ));
 
                     try {
                         emitter.send(SseEmitter.event().name("finish").data(objectMapper.writeValueAsString(finishPayload)));
@@ -255,50 +304,74 @@ public class AgentPlatformController {
                 }
 
                 // 3. 真实 RAG 检索进回答并按 >= 0.65 硬阈值过滤防幻觉
-                Boolean enableRag = (Boolean) req.getOrDefault("enableRAG", true);
                 List<Map<String, Object>> citationsList = new ArrayList<>();
                 long ragStartTime = System.currentTimeMillis();
                 long ragDurationMs = 0;
-                if (Boolean.TRUE.equals(enableRag)) {
-                    List<HybridRagService.RagChunk> ragChunks = hybridRagService.hybridSearch(messageText, 5);
-                    ragDurationMs = System.currentTimeMillis() - ragStartTime;
+                HybridRagService.SearchResult searchResult = null;
 
-                    // hybridSearch 内部已在 50 条候选集上完成了 >= 0.65 的硬阈值过滤并经 RRF 融合精排
-                    List<HybridRagService.RagChunk> highConfidenceChunks = ragChunks;
+                if (Boolean.TRUE.equals(enableRag)) {
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 3, "HYBRID_RAG", "企业知识库多路召回", "RUNNING", Map.of("query", messageText));
+                    searchResult = hybridRagService.hybridSearchWithStats(messageText, 5);
+                    ragDurationMs = searchResult.getCostMs();
+                    List<HybridRagService.RagChunk> highConfidenceChunks = searchResult.getChunks();
 
                     if (!highConfidenceChunks.isEmpty()) {
                         StringBuilder citations = new StringBuilder();
+                        int citationIdx = 1;
                         for (HybridRagService.RagChunk chunk : highConfidenceChunks) {
-                            citations.append("\n【参考资料：").append(chunk.getProjectName())
-                                     .append(" (余弦相似度: ").append(chunk.getDenseScore())
+                            citations.append("\n【参考资料 [").append(citationIdx).append("]：").append(chunk.getProjectName())
+                                     .append(" (得分: ").append(chunk.getDenseScore())
                                      .append(", BM25: ").append(chunk.getSparseScore()).append(")】\n")
                                      .append(chunk.getText()).append("\n");
 
                             Map<String, Object> cItem = new LinkedHashMap<>();
+                            cItem.put("index", citationIdx);
                             cItem.put("chunkId", chunk.getChunkId());
                             cItem.put("docTitle", chunk.getProjectName());
                             cItem.put("section", chunk.getSection());
                             cItem.put("snippet", chunk.getText().length() > 80 ? chunk.getText().substring(0, 80) + "..." : chunk.getText());
                             cItem.put("score", chunk.getDenseScore());
+                            cItem.put("bm25Score", chunk.getSparseScore());
                             cItem.put("rrfScore", chunk.getRrfScore());
+                            cItem.put("matchType", chunk.getVectorMode());
                             citationsList.add(cItem);
+                            citationIdx++;
                         }
 
                         // 通过 SSE 发送引用溯源事件
                         if (isClientConnected.get() && !citationsList.isEmpty()) {
                             try {
-                                emitter.send(SseEmitter.event().name("citations").data(objectMapper.writeValueAsString(citationsList)));
+                                Map<String, Object> citationsPayload = new LinkedHashMap<>();
+                                citationsPayload.put("items", citationsList);
+                                citationsPayload.put("totalDocs", searchResult.getTotalDocs());
+                                citationsPayload.put("bm25Candidates", searchResult.getBm25Candidates());
+                                citationsPayload.put("noiseFiltered", searchResult.getNoiseFiltered());
+                                citationsPayload.put("validCount", searchResult.getValidCount());
+                                citationsPayload.put("mode", searchResult.getMode());
+                                emitter.send(SseEmitter.event().name("citations").data(objectMapper.writeValueAsString(citationsPayload)));
                             } catch (Exception ignored) {}
                         }
 
                         currentPrompt = currentPrompt.isBlank()
-                                ? "你是企业级智能中台助手。请结合以下检索到的知识库真实材料作答：\n" + citations
-                                : currentPrompt + "\n\n【企业知识库关联上下文】：\n" + citations;
+                                ? "你是企业级智能中台助手。请结合以下检索到的知识库真实材料作答。在引述事实或规范时必须在正文后标明对应角标，形如 [1] 或 [2]，严禁脱离材料随意编造：\n" + citations
+                                : currentPrompt + "\n\n【企业知识库关联上下文（必须在正文事实后标明对应 [1] 或 [2] 引用角标）】：\n" + citations;
                     } else {
                         // 未命中高置信度切片：降级为通用常识回答，严防模型幻觉
-                        String fallbackNotice = "\n\n【知识库检索提示】：未在企业知识库中检索到与提问高度匹配的资料（所有候选切片余弦相似度均低于 0.65 阈值）。请依据通用技术常识谨慎回答，并明确告知用户当前知识库暂缺相关依据。";
+                        String fallbackNotice = "\n\n【知识库检索提示】：知识库未找到足够相关内容，以下回答未引用内部制度。";
                         currentPrompt = currentPrompt.isBlank() ? "你是企业级智能中台助手。" + fallbackNotice : currentPrompt + fallbackNotice;
                     }
+
+                    Map<String, Object> ragDetails = new LinkedHashMap<>();
+                    ragDetails.put("ragMs", ragDurationMs);
+                    ragDetails.put("totalDocs", searchResult.getTotalDocs());
+                    ragDetails.put("bm25Candidates", searchResult.getBm25Candidates());
+                    ragDetails.put("noiseFiltered", searchResult.getNoiseFiltered());
+                    ragDetails.put("validCount", searchResult.getValidCount());
+                    ragDetails.put("isRealVector", searchResult.isRealVector());
+                    ragDetails.put("mode", searchResult.getMode());
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 3, "HYBRID_RAG", "企业知识库多路召回", "DONE", ragDetails);
+                } else {
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 3, "HYBRID_RAG", "企业知识库多路召回", "SKIPPED", Map.of("reason", "用户关闭了 RAG 知识检索"));
                 }
 
                 // 4. 上下文滑动窗口：严格截断最近 3 轮 (最多 6 条历史消息：3 user + 3 assistant)
@@ -321,6 +394,9 @@ public class AgentPlatformController {
                 // 5. 真实工具调用闭环 (大模型驱动，彻底杜绝关键词旁路与假调用)
                 int currentDepth = 1;
                 List<Map<String, Object>> toolDefs = toolExecutor.getToolDefinitions();
+                int totalToolsExecuted = 0;
+                boolean hasPendingApproval = false;
+                Map<String, Object> pendingApprovalData = null;
 
                 while (currentDepth <= 3 && isClientConnected.get()) {
                     try {
@@ -332,6 +408,7 @@ public class AgentPlatformController {
 
                             if (messageNode.has("tool_calls") && messageNode.get("tool_calls").isArray() && messageNode.get("tool_calls").size() > 0) {
                                 com.fasterxml.jackson.databind.JsonNode toolCallsArray = messageNode.get("tool_calls");
+                                totalToolsExecuted += toolCallsArray.size();
 
                                 // 构造包含全部 tool_calls 的 assistant 消息
                                 List<Map<String, Object>> assistantToolCallsList = new ArrayList<>();
@@ -383,16 +460,22 @@ public class AgentPlatformController {
 
                                     if (isClientConnected.get()) {
                                         try {
-                                            emitter.send(SseEmitter.event().name("tool").data(objectMapper.writeValueAsString(Map.of(
-                                                "tool", functionName,
-                                                "parameters", functionArgs,
-                                                "status", toolResult.isSuccess() ? "success" : "error",
-                                                "duration", toolDurationStr,
-                                                "result", toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage()
-                                            ))));
+                                            Map<String, Object> toolPayloadMap = new LinkedHashMap<>();
+                                            toolPayloadMap.put("tool", functionName);
+                                            toolPayloadMap.put("parameters", functionArgs);
+                                            toolPayloadMap.put("status", toolResult.isSuccess() ? "success" : "error");
+                                            toolPayloadMap.put("duration", toolDurationStr);
+                                            toolPayloadMap.put("result", toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage());
+                                            toolCallsList.add(toolPayloadMap);
+                                            emitter.send(SseEmitter.event().name("tool").data(objectMapper.writeValueAsString(toolPayloadMap)));
 
                                             // 若触发生产级高危写操作安全拦截，向前端推送 approval_required 事件
                                             if ("PENDING_APPROVAL".equals(toolResult.getErrorType()) && toolResult.getData() != null) {
+                                                hasPendingApproval = true;
+                                                if (toolResult.getData() instanceof Map) {
+                                                    pendingApprovalData = (Map<String, Object>) toolResult.getData();
+                                                }
+                                                approvalTicketRef.set(toolResult.getData());
                                                 emitter.send(SseEmitter.event().name("approval_required").data(objectMapper.writeValueAsString(toolResult.getData())));
                                             }
                                         } catch (Exception ignored) {}
@@ -433,6 +516,19 @@ public class AgentPlatformController {
                     break;
                 }
 
+                // 实时下发步骤 4 (工具沙箱) 与步骤 5 (安全门禁)
+                if (totalToolsExecuted > 0) {
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 4, "TOOL_ACTION", "业务系统工具执行", "DONE", Map.of("totalToolsExecuted", totalToolsExecuted));
+                } else {
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 4, "TOOL_ACTION", "业务系统工具执行", "SKIPPED", Map.of("reason", "语义直通模式：纯文本问答无需外部外挂工具"));
+                }
+
+                if (hasPendingApproval && pendingApprovalData != null) {
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 5, "MUTATION_GATE", "高危操作人工复核闸口", "BLOCKED", pendingApprovalData);
+                } else {
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 5, "MUTATION_GATE", "高危操作人工复核闸口", "PASSED", Map.of("reason", "基线核验通过：当前会话均为只读操作与受控计算"));
+                }
+
                 // 6. 流式推流自然语言回答 (经由多模型故障转移网关 ModelGatewayService 调度)
                 StringBuilder replyBuffer = new StringBuilder();
                 StringBuilder reasoningBuffer = new StringBuilder();
@@ -446,7 +542,10 @@ public class AgentPlatformController {
                         temperature,
                         messages,
                         delta -> {
-                            if (firstTokenTimeRef.compareAndSet(0, System.currentTimeMillis())) {}
+                            if (firstTokenTimeRef.compareAndSet(0, System.currentTimeMillis())) {
+                                long currentTtft = System.currentTimeMillis() - startTime;
+                                sendTraceStep(emitter, isClientConnected, traceStepsMap, 6, "LLM_RESPONSE", "结果组装与流式交付", "STREAMING", Map.of("ttftMs", currentTtft));
+                            }
                             if (isClientConnected.get()) {
                                 try {
                                     replyBuffer.append(delta);
@@ -487,6 +586,20 @@ public class AgentPlatformController {
                         asstMsg.setCitationsJson(objectMapper.writeValueAsString(citationsList));
                     } catch (Exception ignored) {}
                 }
+                try {
+                    asstMsg.setTraceStepsJson(objectMapper.writeValueAsString(traceStepsMap));
+                    if (!toolCallsList.isEmpty()) {
+                        asstMsg.setToolCallsJson(objectMapper.writeValueAsString(toolCallsList));
+                    }
+                    if (approvalTicketRef.get() != null) {
+                        asstMsg.setApprovalTicketJson(objectMapper.writeValueAsString(approvalTicketRef.get()));
+                    }
+                    Map<String, Object> traceSummary = new LinkedHashMap<>();
+                    traceSummary.put("cached", false);
+                    traceSummary.put("totalMs", durationMs);
+                    traceSummary.put("tokens", asstMsg.getTokens());
+                    asstMsg.setTraceJson(objectMapper.writeValueAsString(traceSummary));
+                } catch (Exception ignored) {}
                 messageRepository.save(asstMsg);
 
                 // 8. Token 账单防虚标审计：若上游未返回真实 usage，不使用字符除以 2 伪造账单
@@ -537,7 +650,20 @@ public class AgentPlatformController {
                     traceMap.put("streamMs", streamMs);
                     traceMap.put("hitCount", citationsList.size());
                     traceMap.put("cached", false);
+                    traceMap.put("hitType", "NONE");
+                    traceMap.put("hashKey", promptHashKey);
                     traceMap.put("savedTokens", 0);
+
+                    if (searchResult != null) {
+                        Map<String, Object> ragStatsMap = new LinkedHashMap<>();
+                        ragStatsMap.put("totalDocs", searchResult.getTotalDocs());
+                        ragStatsMap.put("bm25Candidates", searchResult.getBm25Candidates());
+                        ragStatsMap.put("noiseFiltered", searchResult.getNoiseFiltered());
+                        ragStatsMap.put("validCount", searchResult.getValidCount());
+                        ragStatsMap.put("isRealVector", searchResult.isRealVector());
+                        ragStatsMap.put("mode", searchResult.getMode());
+                        traceMap.put("ragStats", ragStatsMap);
+                    }
 
                     // 写入 Failover 真实审计溯源数据
                     if (failoverCtx != null && failoverCtx.triggered) {
@@ -557,6 +683,14 @@ public class AgentPlatformController {
                     finishPayload.put("cached", false);
                     finishPayload.put("savedTokens", 0);
                     finishPayload.put("trace", traceMap);
+
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 6, "LLM_RESPONSE", "结果组装与交付", "DONE", Map.of(
+                        "totalMs", durationMs,
+                        "ttftMs", ttftMs,
+                        "streamMs", streamMs,
+                        "tokens", finalTokens,
+                        "duration", durationStr
+                    ));
 
                     emitter.send(SseEmitter.event().name("finish").data(objectMapper.writeValueAsString(finishPayload)));
                     emitter.complete();
@@ -635,6 +769,19 @@ public class AgentPlatformController {
     public ResponseEntity<Void> deleteKnowledgeChunk(@PathVariable String id) {
         knowledgeRepository.deleteById(id);
         return ResponseEntity.ok().build();
+    }
+
+    @PutMapping("/knowledge/{id}")
+    public ResponseEntity<KnowledgeChunk> updateKnowledgeChunk(
+            @PathVariable String id,
+            @RequestBody Map<String, String> body) {
+        return knowledgeRepository.findById(id).map(chunk -> {
+            if (body.containsKey("docTitle")) chunk.setDocTitle(body.get("docTitle"));
+            if (body.containsKey("content")) chunk.setContent(body.get("content"));
+            if (body.containsKey("keywords")) chunk.setKeywords(body.get("keywords"));
+            if (body.containsKey("category")) chunk.setCategory(body.get("category"));
+            return ResponseEntity.ok(knowledgeRepository.save(chunk));
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     @PostMapping("/tools/toggle/{id}")
@@ -741,7 +888,7 @@ public class AgentPlatformController {
 
         String ticketId = body.get("ticketId");
         String action = body.getOrDefault("action", "REJECT"); // APPROVE or REJECT
-        String approver = body.getOrDefault("approver", "合规安全架构师");
+        String approver = body.getOrDefault("approver", "系统管理员");
 
         Optional<com.ownsudo.entity.ApprovalTicket> opt = approvalTicketRepository.findById(ticketId);
         if (opt.isEmpty()) {
@@ -821,6 +968,29 @@ public class AgentPlatformController {
     public ResponseEntity<Map<String, Object>> resetFailover() {
         modelGatewayService.resetCircuit();
         return ResponseEntity.ok(modelGatewayService.getGatewayStatus());
+    }
+
+    /**
+     * 向客户端逐帧下发真实全链路执行轨迹 (Trace Step)
+     * 解决前端靠静态模板拼凑假进度的问题，实现服务端驱动的真实阶段流转
+     */
+    private void sendTraceStep(SseEmitter emitter, AtomicBoolean isConnected, Map<Integer, Object> traceStepsMap, int step, String name, String title, String status, Map<String, Object> details) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("step", step);
+        payload.put("name", name);
+        payload.put("title", title);
+        payload.put("status", status);
+        payload.put("timestamp", System.currentTimeMillis());
+        if (details != null) {
+            payload.putAll(details);
+        }
+        if (traceStepsMap != null) {
+            traceStepsMap.put(step, payload);
+        }
+        if (isConnected != null && !isConnected.get()) return;
+        try {
+            emitter.send(SseEmitter.event().name("trace_step").data(objectMapper.writeValueAsString(payload)));
+        } catch (Exception ignored) {}
     }
 
 }

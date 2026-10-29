@@ -149,9 +149,9 @@ public class LlmClientService {
         }
         double temperature = customTemperature != null ? customTemperature : 0.7;
 
-        // 如果是云端闭源模型且没有配置有效 API Key，自动启用离线高保真演示沙箱
+        // 如果是云端闭源模型且没有配置有效 API Key，自动启用服务诊断提示
         if (!isLocalOllama && (apiKey == null || apiKey.trim().isEmpty() || apiKey.startsWith("sk-***"))) {
-            runDemoSandboxStreaming(messages, onDelta, onReasoning, onUsage, isClientConnected);
+            streamDiagnosticFallback(messages, onDelta, onReasoning, onUsage, isClientConnected);
             return;
         }
 
@@ -200,16 +200,16 @@ public class LlmClientService {
             if (!isClientConnected.get()) return;
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             if (cause instanceof ConnectException) {
-                System.out.println("[LlmClientService] 上游端点无法连通 (" + endpoint + ")，自动启用【离线高保真演示沙箱】保证交互闭环");
-                runDemoSandboxStreaming(messages, onDelta, onReasoning, onUsage, isClientConnected);
+                System.out.println("[LlmClientService] 上游端点无法连通 (" + endpoint + ")，自动启用【服务诊断提示】引导用户配置");
+                streamDiagnosticFallback(messages, onDelta, onReasoning, onUsage, isClientConnected);
                 return;
             }
             throw e;
         }
 
         if (response.statusCode() != 200) {
-            System.out.println("[LlmClientService] 上游返回异常状态码 " + response.statusCode() + "，自动降级至【离线高保真演示沙箱】");
-            runDemoSandboxStreaming(messages, onDelta, onReasoning, onUsage, isClientConnected);
+            System.out.println("[LlmClientService] 上游返回异常状态码 " + response.statusCode() + "，自动降级至【服务诊断提示】");
+            streamDiagnosticFallback(messages, onDelta, onReasoning, onUsage, isClientConnected);
             return;
         }
 
@@ -317,9 +317,9 @@ public class LlmClientService {
             }
         } catch (Exception e) {
             future.cancel(true);
-            return resolveDemoToolCalls(messages);
+            return null;
         }
-        return resolveDemoToolCalls(messages);
+        return null;
     }
 
         public float[] getEmbeddings(String text) {
@@ -515,194 +515,41 @@ public class LlmClientService {
     }
 
     /**
-     * 【离线高保真演示沙箱】
-     * 当外部大模型端点未就绪或未配 Key 时自动启用，以资深架构师水准流式推流，展示思考、代码、RAG 闭环。
+     * 【端点未就绪降级提示】
+     * 当外部大模型端点未就绪或未配 Key 时，诚实输出诊断信息与引导配置，绝不假造虚假长文或虚假 QPS 数据。
      */
-    public void runDemoSandboxStreaming(
+    public void streamDiagnosticFallback(
             List<Map<String, Object>> messages,
             Consumer<String> onDelta,
             Consumer<String> onReasoning,
             java.util.function.BiConsumer<Integer, Integer> onUsage,
             AtomicBoolean isClientConnected
     ) {
-        // 提取用户最新提问
-        String userQuery = "";
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Object role = messages.get(i).get("role");
-            if ("user".equals(role)) {
-                userQuery = String.valueOf(messages.get(i).get("content"));
-                break;
-            }
-        }
-
-        // 1. 模拟真实思考链推演流
         if (onReasoning != null && isClientConnected.get()) {
-            List<String> reasoningSteps = List.of(
-                "正在启动【离线高保真演示沙箱】自愈引擎...\n",
-                "检测到当前大模型端点未就绪或未配置 API Key，系统自动无缝接入企业内置架构专家知识中台。\n",
-                "正在解析问题意图与核心关键词: " + (userQuery.length() > 40 ? userQuery.substring(0, 40) + "..." : userQuery) + "\n",
-                "推演要点：结合 Java 21 / Spring Boot 3 生产规范，梳理底层原理、性能基准与高可用落地避坑指南...\n",
-                "推演完毕，准备生成高水准技术方案与架构代码。"
-            );
-            for (String step : reasoningSteps) {
-                if (!isClientConnected.get()) return;
-                onReasoning.accept(step);
-                try { Thread.sleep(120); } catch (InterruptedException ignored) {}
-            }
+            onReasoning.accept("检测到当前大模型推理端点未配置有效 API Key 或网络未就绪，输出服务状态诊断...");
         }
 
-        // 2. 构造高水准行业级回答正文
-        String notice = "> 💡 **【离线高保真演示沙箱】**：检测到当前大模型服务未启动（或未配置 API Key），系统已自动无缝切换至**内置高保真沙箱引擎**，确保您无需任何配置即可完整体验「深度推演思考 + 流式推流 + 架构落地 + RAG 知识检索」全套闭环交互。如需实时模型问答，可在左侧「系统设置」随时填入 API Key。\n\n---\n\n";
+        String notice = "> ⚠️ **【大模型服务未就绪】**\n\n"
+                + "系统检测到当前大模型端点尚未连通或未配置有效 API Key，无法完成实时 LLM 推理。\n\n"
+                + "**如何启用实时模型推理：**\n"
+                + "1. **配置云端大模型**：前往左侧导航栏 **「设置 / 治理」**，填入通义千问 (DashScope)、DeepSeek 或 OpenAI 的 API Key 并保存；\n"
+                + "2. **启动本地 Ollama**：在本地终端启动 `ollama run deepseek-r1:8b`（默认端口 11434），系统会自动连通本地模型；\n"
+                + "3. **知识库 RAG 与缓存依然可用**：若命中企业知识库或精确哈希，上方已真实呈现知识切片与毫秒级降本缓存。\n";
 
-        String qLower = userQuery.toLowerCase();
-        StringBuilder answer = new StringBuilder(notice);
-
-        if (qLower.contains("虚拟线程") || qLower.contains("virtual thread") || qLower.contains("spring boot 3") || qLower.contains("loom")) {
-            answer.append("### 一、Spring Boot 3 虚拟线程（Project Loom）的核心颠覆性优势\n\n")
-                  .append("Spring Boot 3.2+ 全面集成了 Java 21 虚拟线程，这是自 Java 1.0 诞生 28 年以来在并发模型上**最根本性的架构跃迁**。核心优势主要体现在以下四个维度：\n\n")
-                  .append("#### 1. 吞吐量质的飞跃（百万级并发支持）\n")
-                  .append("- **传统平台线程（Platform Thread）**：与操作系统内核线程 **1:1 映射**，每个线程需要保留 **1MB** 独立的操作系统栈内存。当并发量达到上万时，JVM 会因为内存耗尽直接抛出 `java.lang.OutOfMemoryError: unable to create native thread`。\n")
-                  .append("- **虚拟线程（Virtual Thread）**：由 JVM 在用户空间调度的轻量级线程，属于 **M:N 映射**（百万虚拟线程挂载到几十个 CPU 载体线程上）。每个虚拟线程仅占用 **数百字节** 堆内存，创建与销毁耗时仅纳秒级，百万并发不再是神话。\n\n")
-                  .append("#### 2. 终结复杂的 Reactive / 响应式回调地狱\n")
-                  .append("- 过去为了压榨高并发 I/O 性能，架构师不得不将系统重构成 WebFlux、RxJava 等异步非阻塞框架，破坏了传统同步线性编程心智，且全链路 TraceId（MDC）丢失、异常栈排查极其痛苦。\n")
-                  .append("- 虚拟线程彻底恢复了**经典同步顺序编码心智**（Write Synchronous, Run Asynchronous）：当遇到数据库 JDBC、远程 HTTP 或 Redis 等阻塞 I/O 时，JVM 自动将当前虚拟线程从底层载体线程（Carrier Thread）上**卸载（Unmount）**，载体线程立刻去处理其他请求，I/O 响应就绪后自动重新装载（Mount）。\n\n")
-                  .append("#### 3. 生产极简接入（一行配置开箱即用）\n")
-                  .append("在 Spring Boot 3.2+ 中，只需在 `application.yml` 添加配置：\n\n")
-                  .append("```yaml\n")
-                  .append("spring:\n")
-                  .append("  threads:\n")
-                  .append("    virtual:\n")
-                  .append("      enabled: true # 一键自动接管 Tomcat 请求处理线程、TaskExecutor 与 @Async 任务调度\n")
-                  .append("```\n\n")
-                  .append("#### 4. 生产落地的硬核架构避坑军规\n")
-                  .append("| 避坑维度 | 常见致命错误 | 工业级最佳实践 |\n")
-                  .append("| :--- | :--- | :--- |\n")
-                  .append("| **Pinning（锁固定）** | 在 `synchronized` 同步块内执行长耗时远程 I/O，导致载体线程被固定挂起 | 全面将旧代码中的 `synchronized` 替换为 `java.util.concurrent.locks.ReentrantLock` |\n")
-                  .append("| **线程池化反模式** | 盲目对虚拟线程使用 `Executors.newFixedThreadPool()` | **严禁池化虚拟线程**！虚拟线程应当随用随建，使用 `Executors.newVirtualThreadPerTaskExecutor()` |\n")
-                  .append("| **ThreadLocal 滥用** | 在大量虚拟线程中存放大体积对象导致内存泄漏 | 尽量改用 Java 21 `ScopedValue` 替代老旧的 `ThreadLocal` |\n\n")
-                  .append("> 💡 **实测基准数据**：在真实微服务下单场景（含 30ms 数据库查询与 50ms 外部支付网关 I/O）压测中，单台 4C8G 容器在开启虚拟线程后，Tomcat 压测吞吐量由原先的 **1,200 QPS 飙升至 9,800 QPS**，CPU 利用率由 18% 充分提升至 88%，且无任何线程饥饿排队。");
-        } else if (qLower.contains("限流") || qLower.contains("rate limit") || qLower.contains("令牌桶") || qLower.contains("漏桶")) {
-            answer.append("### 一、高性能企业级分布式限流组件架构设计\n\n")
-                  .append("高可用大流量系统中的限流绝不能只依赖单机内存限流，必须采取**分层递进防御架构**：\n\n")
-                  .append("```\n")
-                  .append("用户流量入口 ──> [网关层限流: Nginx/Gateway 粗筛] ──> [集群级分布式限流: Redis + Lua 原子令牌桶] ──> [单机兜底: SlidingWindow 熔断] ──> 业务核心服务\n")
-                  .append("```\n\n")
-                  .append("#### 1. 核心技术选型：Redis + Lua 原子令牌桶\n")
-                  .append("利用 Redis 执行单线程 Lua 脚本保证“查询令牌 -> 扣减令牌 -> 更新时间戳”的**绝对原子性**，杜绝并发竞争超卖：\n\n")
-                  .append("```lua\n")
-                  .append("-- KEYS[1]: 限流 key, ARGV[1]: 桶容量, ARGV[2]: 令牌生成速率(个/秒), ARGV[3]: 当前时间戳, ARGV[4]: 请求令牌数\n")
-                  .append("local key = KEYS[1]\n")
-                  .append("local capacity = tonumber(ARGV[1])\n")
-                  .append("local rate = tonumber(ARGV[2])\n")
-                  .append("local now = tonumber(ARGV[3])\n")
-                  .append("local requested = tonumber(ARGV[4])\n\n")
-                  .append("local info = redis.call('HMGET', key, 'tokens', 'last_time')\n")
-                  .append("local tokens = tonumber(info[1]) or capacity\n")
-                  .append("local last_time = tonumber(info[2]) or now\n\n")
-                  .append("-- 动态计算时间差并补齐令牌\n")
-                  .append("local delta = math.max(0, now - last_time)\n")
-                  .append("tokens = math.min(capacity, tokens + delta * rate)\n\n")
-                  .append("if tokens >= requested then\n")
-                  .append("    redis.call('HMSET', key, 'tokens', tokens - requested, 'last_time', now)\n")
-                  .append("    return 1 -- 放行\n")
-                  .append("else\n")
-                  .append("    return 0 -- 限流拦截\n")
-                  .append("end\n")
-                  .append("```\n\n")
-                  .append("#### 2. 自愈与高可用降级防御\n")
-                  .append("- **Redis 故障自动逃逸**：当 Redis 发生网络分区或超时时，切面捕获异常自动降级为本地内存滑动窗口限流，杜绝“限流组件故障反向拖垮整个系统”；\n")
-                  .append("- **平滑排队削峰**：拦截的请求支持通过 RocketMQ 队列进行异步平滑重试，返回 HTTP 429 与友好排队提示。");
-        } else if (qLower.contains("rag") || qLower.contains("检索") || qLower.contains("切片") || qLower.contains("向量") || qLower.contains("embedding")) {
-            answer.append("### 一、企业级大模型 RAG 混合检索工业级落地最佳实践\n\n")
-                  .append("真实生产场景中的 RAG 系统面临两大核心挑战：**大库全表扫向量导致的高延迟与 OOM**，以及**检索噪音切片导致的大模型幻觉**。最佳架构实践应由以下三层构成：\n\n")
-                  .append("#### 1. 入库流水线与切片工程学\n")
-                  .append("- **长文本语义断句切片**：优先依据段落换行 `\\n\\n` 与句尾标点（`。！？`）切分，设定 **500 字符分块 + 50 字符重叠窗口（Overlap）**，确保跨块实体上下文连续性；\n")
-                  .append("- **离线向量入库**：切片存入 `knowledge_chunk` 时一次性离线算好并存入 `embedding_json`，检索时坚决不在当前请求现场为候选文档现算向量。\n\n")
-                  .append("#### 2. 两阶段漏斗剪枝召回架构\n")
-                  .append("```\n")
-                  .append("海量切片 (全库 N 条) ──> [阶段一: 全库轻量字段 BM25 词频粗筛] ──> Top 50 候选 ID ──> [阶段二: 仅回表 50 条预存向量余弦精排] ──> [0.65 硬阈值淘汰] ──> RRF 融合 ──> Top 5\n")
-                  .append("```\n")
-                  .append("- **阶段一（粗筛）**：只查询不含大向量的轻量字段，用全库真实文档数计算 BM25。若关键词全未命中（BM25=0）坚决返回空，拒绝按插入顺序盲目凑数；\n")
-                  .append("- **阶段二（精排与回表）**：仅将粗筛通过的 Top 50 ID 回表查出向量，在 JVM 内存中并行计算余弦相似度。\n\n")
-                  .append("#### 3. 相似度硬阈值（0.65）防幻觉防线\n")
-                  .append("- 在 50 条候选集计算完毕后，**必须先硬剔除低于 0.65 的噪音切片**；\n")
-                  .append("- 仅对存活的高置信切片应用 **RRF 倒数排名融合算法（k=60）** 综合排序，取 Top 5 注入 Prompt 上下文；\n")
-                  .append("- 全链路保留切片 ID 与文档来源，前端渲染**可点击溯源角标**，回答有理有据。");
-        } else {
-            answer.append("### 一、企业级架构解析与落地方案\n\n")
-                  .append("针对您的指令：**「").append(userQuery).append("」**，从企业级高可用、高并发与可扩展系统的设计标准来看，建议遵循以下工程落地路径：\n\n")
-                  .append("#### 1. 系统边界与核心领域划分\n")
-                  .append("- 明确核心读写链路，采用 **CQRS（命令查询职责分离）** 架构隔绝复杂报表查询对主业务交易的影响；\n")
-                  .append("- 建立无状态（Stateless）应用服务节点，通过负载均衡集群实现平滑水平伸缩。\n\n")
-                  .append("#### 2. 数据库与缓存一致性保障\n")
-                  .append("- 核心事务遵循 **ACID** 强一致性规范，读密集型场景引入 Redis 缓存加速；\n")
-                  .append("- 采用“先更新数据库，再淘汰缓存 + 延迟双删”策略，避免并发脏读。\n\n")
-                  .append("#### 3. 全链路可观测性与审计\n")
-                  .append("- 接入 W3C TraceContext（traceparent / tracestate）全链路分布式追踪；\n")
-                  .append("- 核心操作（如工具调用、资金流转）严格落库审计表，记录入参、耗时与执行状态。");
-        }
-
-        // 3. 流式打字机逐字推流
-        String fullText = answer.toString();
-        int chunkSize = 4;
-        for (int i = 0; i < fullText.length(); i += chunkSize) {
+        int chunkSize = 8;
+        for (int i = 0; i < notice.length(); i += chunkSize) {
             if (!isClientConnected.get()) {
-                System.out.println("[DemoSandbox] 客户端主动断开，沙箱推流提前退出");
                 break;
             }
-            int end = Math.min(i + chunkSize, fullText.length());
-            onDelta.accept(fullText.substring(i, end));
+            int end = Math.min(i + chunkSize, notice.length());
+            onDelta.accept(notice.substring(i, end));
             try {
                 Thread.sleep(15);
             } catch (InterruptedException ignored) {}
         }
 
-        // 4. 上报 Token 统计
         if (onUsage != null) {
-            onUsage.accept(120, fullText.length() / 2);
+            onUsage.accept(0, 0);
         }
-    }
-
-    /**
-     * 【演示沙箱工具决策】模拟识别用户是否意图调用本地工具，驱动三步调用闭环
-     */
-    public JsonNode resolveDemoToolCalls(List<Map<String, Object>> messages) {
-        String lastUserQuery = "";
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            if ("user".equals(messages.get(i).get("role"))) {
-                lastUserQuery = String.valueOf(messages.get(i).get("content"));
-                break;
-            }
-        }
-        String q = lastUserQuery.toLowerCase();
-
-        String functionName = null;
-        String functionArgs = null;
-
-        if (q.contains("iban") || q.contains("银行账号") || q.contains("银行卡") || q.contains("de89")) {
-            functionName = "validate_iso20022_iban";
-            functionArgs = "{\"iban\": \"DE89370400440532013000\"}";
-        } else if (q.contains("查询") && (q.contains("数据库") || q.contains("表") || q.contains("sql") || q.contains("会话"))) {
-            functionName = "query_enterprise_db";
-            functionArgs = "{\"sql\": \"SELECT id, title, created_at FROM chat_session LIMIT 5\"}";
-        } else if (q.contains("计算") || q.contains("算一下") || q.contains("18500") || q.contains("公式")) {
-            functionName = "calculate_expression";
-            functionArgs = "{\"expression\": \"(18500 * 0.85) + 3200\"}";
-        } else if (q.contains("信用代码") || q.contains("税号") || q.contains("gb32100")) {
-            functionName = "verify_tax_credit_code";
-            functionArgs = "{\"code\": \"91310000775785552L\"}";
-        }
-
-        if (functionName != null) {
-            String callId = "call-" + UUID.randomUUID().toString().substring(0, 8);
-            try {
-                String syntheticJson = "{\"choices\": [{\"message\": {\"role\": \"assistant\", \"tool_calls\": [{\"id\": \"" 
-                        + callId + "\", \"type\": \"function\", \"function\": {\"name\": \"" 
-                        + functionName + "\", \"arguments\": " + objectMapper.writeValueAsString(functionArgs) + "}}]}}]}";
-                return objectMapper.readTree(syntheticJson);
-            } catch (Exception ignored) {}
-        }
-
-        return null;
     }
 }

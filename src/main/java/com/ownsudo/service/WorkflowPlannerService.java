@@ -109,39 +109,39 @@ public class WorkflowPlannerService {
         // Step 2: 风险沙箱
         topologyNodes.add(Map.of(
             "id", "node-risk-analysis",
-            "name", "多模型风险沙箱与影响推演",
+            "name", "业务风险与影响范围评估",
             "type", "LLM_REASONING",
             "risk", estimatedRisk > 0.6 ? "HIGH" : "LOW",
-            "description", "LLM 评估操作影响范围，动态计算综合风险评分 (" + String.format("%.2f", estimatedRisk) + ")"
+            "description", "评估操作影响范围，计算综合风险评分 (" + String.format("%.2f", estimatedRisk) + ")"
         ));
 
-        // Step 3: 2PC 闸口 (高危必阻断)
+        // Step 3: 人工审批 (高危必阻断)
         if (estimatedRisk > 0.5) {
             topologyNodes.add(Map.of(
                 "id", "node-2pc-gate",
-                "name", "零信任 2PC 人机双签闸口 (Zero-Trust Gate)",
+                "name", "高危操作人工审批",
                 "type", "HUMAN_APPROVAL_2PC",
                 "risk", "CRITICAL",
-                "description", "拦截自动调度，强制要求具备审计权限人员加盖私钥数字签名"
+                "description", "暂停自动执行，等待管理员人工审批确认"
             ));
         }
 
-        // Step 4: MCP 工具调用
+        // Step 4: 工具调用
         topologyNodes.add(Map.of(
             "id", "node-mcp-sql-exec",
-            "name", "MCP 协议受限沙箱执行动作",
+            "name", "后台系统工具安全调用",
             "type", "MCP_TOOL_CALL",
             "risk", estimatedRisk > 0.5 ? "HIGH" : "LOW",
-            "description", "通过 MCP 开放协议连接企业数据库/微服务执行生产变更"
+            "description", "调用数据库或微服务接口安全执行指令"
         ));
 
-        // Step 5: 不可篡改存证
+        // Step 5: 日志存证
         topologyNodes.add(Map.of(
             "id", "node-audit-ledger",
-            "name", "防篡改加密审计凭证存证",
+            "name", "操作日志归档记录",
             "type", "SQL_EXECUTOR",
             "risk", "LOW",
-            "description", "生成 SHA-256 不可抵赖数字存证收据并归档持久化"
+            "description", "生成操作记录并持久化归档至数据库"
         ));
 
         String topologyJson;

@@ -305,8 +305,8 @@ public class ModelGatewayService {
             // 本地 11434 未启动时，进入高仿真兜底引擎
         }
 
-        // 最终兜底：确定性企业级高保真分析引擎
-        llmClientService.runDemoSandboxStreaming(messages, onDelta, onReasoning, onUsage, isClientConnected);
+        // 最终兜底：诚实的服务诊断与配置引导
+        llmClientService.streamDiagnosticFallback(messages, onDelta, onReasoning, onUsage, isClientConnected);
     }
 
     public Map<String, Object> getMetrics() {
