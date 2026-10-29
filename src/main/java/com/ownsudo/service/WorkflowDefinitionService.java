@@ -26,6 +26,10 @@ public class WorkflowDefinitionService {
         return definitionRepository.findById(id);
     }
 
+    public Optional<WorkflowDefinition> getDefinitionById(String id) {
+        return definitionRepository.findById(id);
+    }
+
     public WorkflowDefinition save(WorkflowDefinition def) {
         if (def.getId() == null || def.getId().isBlank()) {
             def.setId("wf-" + UUID.randomUUID().toString().substring(0, 8));
