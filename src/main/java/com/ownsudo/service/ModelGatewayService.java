@@ -154,7 +154,7 @@ public class ModelGatewayService {
             ctx.switchLatencyMs = Math.max(15, System.currentTimeMillis() - switchStart);
             ctx.circuitState = circuitState;
 
-            onReasoning.accept("\n> ⚠️ **[高可用网关熔断告警]** 主通道 (" + ctx.primaryChannel + ") 响应超时 (3000ms)，断路器已触发熔断！\n> - 状态转移：CLOSED ──> OPEN\n> - 自动降级：毫秒级热切换至备用通道 (" + ctx.fallbackChannel + ")\n> - 业务指标：请求已平滑接管，业务零中断。\n\n");
+            onReasoning.accept("\n> 🛡️ **[高可用通道自动切换]** 检测到主通道 (" + ctx.primaryChannel + ") 响应延迟，已自动为您平滑切换至备用私有通道 (" + ctx.fallbackChannel + ")，保障问答业务零中断。\n\n");
 
             executeFallbackStream(messages, onDelta, onReasoning, onUsage, isClientConnected);
             return ctx;
@@ -168,7 +168,7 @@ public class ModelGatewayService {
             ctx.switchLatencyMs = Math.max(12, System.currentTimeMillis() - switchStart);
             ctx.circuitState = circuitState;
 
-            onReasoning.accept("\n> ⚠️ **[高可用网关限流告警]** 主通道 (" + ctx.primaryChannel + ") 遭遇 HTTP 429 限流！\n> - 状态转移：触发自适应降级\n> - 自动降级：毫秒级热切换至备用通道 (" + ctx.fallbackChannel + ")\n> - 业务指标：请求已平滑接管，业务零中断。\n\n");
+            onReasoning.accept("\n> 🛡️ **[高可用通道自动切换]** 检测到主通道 (" + ctx.primaryChannel + ") 遭遇服务限流，已自动为您平滑切换至备用私有通道 (" + ctx.fallbackChannel + ")，保障问答业务零中断。\n\n");
 
             executeFallbackStream(messages, onDelta, onReasoning, onUsage, isClientConnected);
             return ctx;
@@ -226,7 +226,7 @@ public class ModelGatewayService {
             ctx.circuitState = circuitState;
             ctx.switchLatencyMs = Math.max(15, System.currentTimeMillis() - switchStart);
 
-            onReasoning.accept("\n> ⚠️ **[高可用网关熔断告警]** 主通道 (" + ctx.primaryChannel + ") 异常：" + failureReason + "\n> - 状态转移：当前断路器状态已置为 " + circuitState + "\n> - 自动降级：毫秒级热切换至备用通道 (" + ctx.fallbackChannel + ")\n> - 业务指标：请求已平滑接管，业务零中断。\n\n");
+            onReasoning.accept("\n> 🛡️ **[高可用通道自动切换]** 检测到主通道 (" + ctx.primaryChannel + ") 异常已自动切换至备用通道 (" + ctx.fallbackChannel + ")，保障问答业务零中断。\n\n");
 
             // 无缝由备用通道接管
             executeFallbackStream(messages, onDelta, onReasoning, onUsage, isClientConnected);
