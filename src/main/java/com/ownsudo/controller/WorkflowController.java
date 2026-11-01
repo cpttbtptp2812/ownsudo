@@ -82,8 +82,12 @@ public class WorkflowController {
 
     @DeleteMapping("/definitions/{id}")
     public ResponseEntity<Map<String, Object>> deleteDefinition(@PathVariable String id) {
-        definitionService.delete(id);
-        return ResponseEntity.ok(Map.of("ok", true, "deletedId", id));
+        try {
+            definitionService.delete(id);
+            return ResponseEntity.ok(Map.of("ok", true, "deletedId", id));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("ok", false, "error", e.getMessage() != null ? e.getMessage() : "删除失败"));
+        }
     }
 
     @PostMapping("/run")

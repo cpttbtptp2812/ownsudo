@@ -30,6 +30,9 @@ public class ToolExecutor {
     @Autowired(required = false)
     private ApprovalTicketRepository approvalTicketRepository;
 
+    @Autowired(required = false)
+    private GitService gitService;
+
     public interface ToolHandler {
         Object execute(Map<String, Object> params) throws Exception;
     }
@@ -180,6 +183,102 @@ public class ToolExecutor {
             res.put("expectedChecksum", String.valueOf(checkChar));
             res.put("actualChecksum", String.valueOf(code.charAt(17)));
             res.put("isValid", isValid);
+            return res;
+        });
+
+        // 5. Git 代码仓库提交历史查询技能 (代码技能 / MCP技能)
+        registerTool("get_git_commit_history", params -> {
+            if (gitService == null) {
+                throw new IllegalStateException("GitService 未就绪，无法访问 Git 仓库技能");
+            }
+            String repoId = Optional.ofNullable(params.get("repoId")).map(Object::toString).orElse("").trim();
+            if (repoId.isEmpty() || "default".equalsIgnoreCase(repoId)) {
+                List<com.ownsudo.entity.GitRepositoryEntity> allRepos = gitService.getAll(null);
+                if (!allRepos.isEmpty()) {
+                    repoId = allRepos.get(0).getId();
+                } else {
+                    throw new IllegalStateException("当前系统未绑定任何 Git 代码仓库，请先在工作流中关联代码库。");
+                }
+            }
+            int limit = 10;
+            if (params.get("limit") != null) {
+                try {
+                    limit = Integer.parseInt(params.get("limit").toString());
+                } catch (Exception ignored) {}
+            }
+            List<GitService.GitCommitItem> commits = gitService.getCommitHistory(repoId, limit);
+            com.ownsudo.entity.GitRepositoryEntity repo = gitService.getById(repoId).orElse(null);
+            Map<String, Object> res = new LinkedHashMap<>();
+            res.put("repoId", repoId);
+            res.put("repoName", repo != null ? repo.getName() : "default-repo");
+            res.put("branch", repo != null ? repo.getBranch() : "main");
+            res.put("commitCount", commits.size());
+            res.put("commits", commits);
+            res.put("status", "SUCCESS");
+            res.put("message", "成功读取 Git 仓库最近 " + commits.size() + " 条更新记录");
+            return res;
+        });
+
+        // 6. Git 提交代码差异 Diff 提取技能 (代码技能 / MCP技能)
+        registerTool("get_git_commit_diff", params -> {
+            if (gitService == null) {
+                throw new IllegalStateException("GitService 未就绪，无法访问 Git 仓库技能");
+            }
+            String repoId = Optional.ofNullable(params.get("repoId")).map(Object::toString).orElse("").trim();
+            if (repoId.isEmpty() || "default".equalsIgnoreCase(repoId)) {
+                List<com.ownsudo.entity.GitRepositoryEntity> allRepos = gitService.getAll(null);
+                if (!allRepos.isEmpty()) {
+                    repoId = allRepos.get(0).getId();
+                } else {
+                    throw new IllegalStateException("当前系统未绑定任何 Git 代码仓库");
+                }
+            }
+            String sha = Optional.ofNullable(params.get("sha")).map(Object::toString).orElse(null);
+            String filePath = Optional.ofNullable(params.get("filePath")).map(Object::toString).orElse(null);
+            GitService.GitDiffResult diffResult = gitService.getCommitDiff(repoId, sha, filePath);
+            Map<String, Object> res = new LinkedHashMap<>();
+            res.put("repoId", repoId);
+            res.put("commitSha", diffResult.commitSha);
+            res.put("author", diffResult.author);
+            res.put("message", diffResult.message);
+            res.put("time", diffResult.time);
+            res.put("filesCount", diffResult.files != null ? diffResult.files.size() : 0);
+            res.put("files", diffResult.files);
+            res.put("diffText", diffResult.diffText != null && diffResult.diffText.length() > 6000 
+                ? diffResult.diffText.substring(0, 6000) + "\n... (差异过长已截断)" 
+                : diffResult.diffText);
+            return res;
+        });
+
+        // 7. Git 代码仓库状态与健康度检测 (代码技能 / MCP技能)
+        registerTool("get_git_repo_status", params -> {
+            if (gitService == null) {
+                throw new IllegalStateException("GitService 未就绪");
+            }
+            String repoId = Optional.ofNullable(params.get("repoId")).map(Object::toString).orElse("").trim();
+            List<com.ownsudo.entity.GitRepositoryEntity> allRepos = gitService.getAll(null);
+            com.ownsudo.entity.GitRepositoryEntity targetRepo = null;
+            if (!repoId.isEmpty() && !"default".equalsIgnoreCase(repoId)) {
+                targetRepo = gitService.getById(repoId).orElse(null);
+            }
+            if (targetRepo == null && !allRepos.isEmpty()) {
+                targetRepo = allRepos.get(0);
+            }
+            if (targetRepo == null) {
+                throw new IllegalStateException("未找到任何 Git 仓库");
+            }
+            Map<String, Object> res = new LinkedHashMap<>();
+            res.put("id", targetRepo.getId());
+            res.put("name", targetRepo.getName());
+            res.put("repoUrl", targetRepo.getRepoUrl());
+            res.put("branch", targetRepo.getBranch());
+            res.put("status", targetRepo.getStatus());
+            res.put("lastCommitSha", targetRepo.getLastCommitSha());
+            res.put("lastCommitMessage", targetRepo.getLastCommitMessage());
+            res.put("lastCommitAuthor", targetRepo.getLastCommitAuthor());
+            res.put("lastCommitTime", targetRepo.getLastCommitTime());
+            res.put("healthStatus", targetRepo.getHealthStatus());
+            res.put("healthMessage", targetRepo.getHealthMessage());
             return res;
         });
     }
@@ -381,6 +480,57 @@ public class ToolExecutor {
                         "code", Map.of("type", "string", "description", "18 位统一社会信用代码")
                     ),
                     "required", List.of("code")
+                )
+            )
+        ));
+
+        // 5. get_git_commit_history
+        list.add(Map.of(
+            "type", "function",
+            "function", Map.of(
+                "name", "get_git_commit_history",
+                "description", "获取企业 Git 代码仓库最近的 Commit 提交历史记录 (包含提交哈希SHA、作者、提交说明、时间)。当用户要求查看 git 提交记录、更新历史、最新代码变更时必须调用本工具。",
+                "parameters", Map.of(
+                    "type", "object",
+                    "properties", Map.of(
+                        "repoId", Map.of("type", "string", "description", "Git 仓库 ID，留空则默认读取当前活跃代码库"),
+                        "limit", Map.of("type", "integer", "description", "读取的最近提交条数，默认 10")
+                    ),
+                    "required", List.of()
+                )
+            )
+        ));
+
+        // 6. get_git_commit_diff
+        list.add(Map.of(
+            "type", "function",
+            "function", Map.of(
+                "name", "get_git_commit_diff",
+                "description", "获取指定 Git 提交的代码变更差异 (Diff) 详情。可用于审查修改的代码行、新增/删除的文件及潜在 Bug 风险。",
+                "parameters", Map.of(
+                    "type", "object",
+                    "properties", Map.of(
+                        "repoId", Map.of("type", "string", "description", "Git 仓库 ID，留空则使用当前代码库"),
+                        "sha", Map.of("type", "string", "description", "Commit SHA 哈希值，留空则提取最新一次提交"),
+                        "filePath", Map.of("type", "string", "description", "指定比对的文件路径，留空则返回整个 Commit 的变更")
+                    ),
+                    "required", List.of()
+                )
+            )
+        ));
+
+        // 7. get_git_repo_status
+        list.add(Map.of(
+            "type", "function",
+            "function", Map.of(
+                "name", "get_git_repo_status",
+                "description", "查询当前绑定的 Git 仓库基础健康状态、当前主分支、文件总数及最新一次提交的摘要。",
+                "parameters", Map.of(
+                    "type", "object",
+                    "properties", Map.of(
+                        "repoId", Map.of("type", "string", "description", "Git 仓库 ID，留空则读取当前代码库")
+                    ),
+                    "required", List.of()
                 )
             )
         ));

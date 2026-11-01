@@ -88,5 +88,63 @@ public class EnterpriseIntegrationController {
         res.put("syncedAt", LocalDateTime.now().toString());
         return ResponseEntity.ok(res);
     }
+
+    /**
+     * 协同通知 Webhook 与 自写 MCP 服务连通性测试 (通过后端中转，彻底规避浏览器 CORS 限制)
+     */
+    @PostMapping("/test-webhook")
+    public ResponseEntity<Map<String, Object>> testWebhook(@RequestBody Map<String, Object> req) {
+        Map<String, Object> res = new LinkedHashMap<>();
+        String webhookUrl = (String) req.get("webhookUrl");
+        String channelType = (String) req.getOrDefault("channelType", "feishu");
+        String secret = (String) req.get("secret");
+
+        if (webhookUrl == null || webhookUrl.isBlank()) {
+            res.put("ok", false);
+            res.put("error", "Webhook 或服务地址不能为空");
+            return ResponseEntity.badRequest().body(res);
+        }
+
+        try {
+            java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(java.time.Duration.ofSeconds(6))
+                    .build();
+
+            String bodyJson;
+            if ("dingtalk".equalsIgnoreCase(channelType)) {
+                bodyJson = "{\"msgtype\":\"text\",\"text\":{\"content\":\"[OwnAgent] 钉钉群机器人通道连通性测试成功！系统运行正常。\"}}";
+            } else if ("wechat".equalsIgnoreCase(channelType)) {
+                bodyJson = "{\"msgtype\":\"text\",\"text\":{\"content\":\"[OwnAgent] 企业微信机器人通道连通性测试成功！系统运行正常。\"}}";
+            } else if ("custom_mcp".equalsIgnoreCase(channelType)) {
+                bodyJson = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}";
+            } else {
+                bodyJson = "{\"msg_type\":\"text\",\"content\":{\"text\":\"[OwnAgent 代码守护智能体] 飞书群通知通道连通性测试成功！已成功连接到审查工作流。\"}}";
+            }
+
+            java.net.http.HttpRequest.Builder reqBuilder = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(webhookUrl.trim()))
+                    .timeout(java.time.Duration.ofSeconds(8))
+                    .header("Content-Type", "application/json");
+
+            if (secret != null && !secret.isBlank()) {
+                reqBuilder.header("Authorization", "Bearer " + secret.trim());
+            }
+
+            java.net.http.HttpRequest request = reqBuilder.POST(java.net.http.HttpRequest.BodyPublishers.ofString(bodyJson)).build();
+            java.net.http.HttpResponse<String> response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+
+            res.put("ok", response.statusCode() >= 200 && response.statusCode() < 400);
+            res.put("statusCode", response.statusCode());
+            res.put("responseBody", response.body());
+            res.put("channelType", channelType);
+            res.put("testedAt", LocalDateTime.now().toString());
+            return ResponseEntity.ok(res);
+        } catch (Exception e) {
+            res.put("ok", false);
+            res.put("error", "网络请求失败: " + e.getMessage());
+            res.put("channelType", channelType);
+            return ResponseEntity.ok(res);
+        }
+    }
 }
 

@@ -2,17 +2,35 @@ package com.ownsudo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ownsudo.entity.WorkflowDefinition;
-import com.ownsudo.repository.WorkflowDefinitionRepository;
+import com.ownsudo.entity.WorkflowInstance;
+import com.ownsudo.repository.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 
 @Service
 public class WorkflowDefinitionService {
 
+    private static final Logger log = LoggerFactory.getLogger(WorkflowDefinitionService.class);
+
     @Autowired
     private WorkflowDefinitionRepository definitionRepository;
+
+    @Autowired
+    private GitRepositoryEntityRepository gitRepository;
+
+    @Autowired
+    private WorkflowInstanceRepository instanceRepository;
+
+    @Autowired
+    private NodeExecutionRepository nodeExecutionRepository;
+
+    @Autowired
+    private ApprovalTicketRepository approvalTicketRepository;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -41,7 +59,39 @@ public class WorkflowDefinitionService {
         return definitionRepository.save(def);
     }
 
+    @Transactional
     public void delete(String id) {
-        definitionRepository.deleteById(id);
+        if (id == null || id.isBlank()) return;
+
+        // 1. 级联清理绑定至该流水线的 Git 仓库
+        try {
+            gitRepository.deleteByWorkflowId(id);
+        } catch (Exception e) {
+            log.warn("清理关联仓库失败: " + e.getMessage());
+        }
+
+        // 2. 级联清理该流水线历史运行实例及其节点明细与审批工单
+        try {
+            List<WorkflowInstance> instances = instanceRepository.findByWorkflowIdOrderByStartedAtDesc(id);
+            for (WorkflowInstance inst : instances) {
+                try {
+                    nodeExecutionRepository.deleteByInstanceId(inst.getId());
+                } catch (Exception ignored) {}
+                try {
+                    approvalTicketRepository.deleteByInstanceId(inst.getId());
+                } catch (Exception ignored) {}
+            }
+            instanceRepository.deleteByWorkflowId(id);
+        } catch (Exception e) {
+            log.warn("清理流水线运行实例失败: " + e.getMessage());
+        }
+
+        // 3. 高效执行主定义物理删除
+        try {
+            definitionRepository.deleteByIdDirectly(id);
+        } catch (Exception e) {
+            log.warn("deleteByIdDirectly 降级: " + e.getMessage());
+            definitionRepository.deleteById(id);
+        }
     }
 }

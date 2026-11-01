@@ -44,6 +44,9 @@ public class WorkflowDefinition {
     @Column(columnDefinition = "LONGTEXT")
     private String topologyJson;
 
+    @Column(name = "dsl_json", columnDefinition = "LONGTEXT")
+    private String dslJson;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -100,6 +103,9 @@ public class WorkflowDefinition {
 
     public String getTopologyJson() { return topologyJson; }
     public void setTopologyJson(String topologyJson) { this.topologyJson = topologyJson; }
+
+    public String getDslJson() { return dslJson; }
+    public void setDslJson(String dslJson) { this.dslJson = dslJson; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

@@ -191,3 +191,31 @@ INSERT INTO system_config (config_key, config_value) VALUES
 ('LLM_MODEL', 'deepseek-r1:8b')
 ON DUPLICATE KEY UPDATE config_key=config_key;
 
+
+-- 13. 代码仓库实体表 (Git Repository)
+CREATE TABLE IF NOT EXISTS git_repository (
+    id VARCHAR(64) PRIMARY KEY,
+    workflow_id VARCHAR(64),
+    name VARCHAR(128) NOT NULL,
+    repo_url VARCHAR(512) NOT NULL,
+    branch VARCHAR(64) DEFAULT 'main',
+    auth_type VARCHAR(32) DEFAULT 'none',
+    access_token VARCHAR(255),
+    ssh_key LONGTEXT,
+    local_path VARCHAR(512),
+    polling_interval_minutes INT DEFAULT 5,
+    auto_analyze_commit BOOLEAN DEFAULT TRUE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    status VARCHAR(32) DEFAULT 'connected',
+    last_commit_sha VARCHAR(64),
+    last_commit_message TEXT,
+    last_commit_author VARCHAR(128),
+    last_commit_time VARCHAR(64),
+    files_count INT DEFAULT 0,
+    health_status VARCHAR(32) DEFAULT 'healthy',
+    health_message TEXT,
+    error_msg TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_git_repo_wf (workflow_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
