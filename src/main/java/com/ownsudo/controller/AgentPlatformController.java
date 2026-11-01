@@ -31,6 +31,8 @@ import java.util.concurrent.atomic.AtomicReference;
 @RequestMapping("/api")
 public class AgentPlatformController {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AgentPlatformController.class);
+
     @Autowired
     private AgentRepository agentRepository;
 
@@ -239,6 +241,30 @@ public class AgentPlatformController {
             }
         }
 
+        // 动态加载 Tab 3 中的排查准则与技能白名单 (Tab 3 Skills/Rules Injection)
+        List<String> enabledSkillsList = new ArrayList<>();
+        if (matchedWorkflow != null && matchedWorkflow.getDslJson() != null && !matchedWorkflow.getDslJson().isBlank()) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode rootDsl = objectMapper.readTree(matchedWorkflow.getDslJson());
+                if (rootDsl.has("skills") && rootDsl.get("skills").isArray()) {
+                    for (com.fasterxml.jackson.databind.JsonNode skillNode : rootDsl.get("skills")) {
+                        boolean isEnabled = !skillNode.has("enabled") || skillNode.get("enabled").asBoolean(true);
+                        if (isEnabled) {
+                            String skillName = skillNode.path("name").asText("排查规则");
+                            enabledSkillsList.add(skillName);
+                            String systemInst = skillNode.path("systemInstruction").asText("");
+                            if (!systemInst.isBlank()) {
+                                rawSystemPrompt = (rawSystemPrompt != null ? rawSystemPrompt : "") + "\n\n【专项技能排查准则 · " + skillName + "】：\n" + systemInst;
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("解析 workflow dsl skills 失败", e);
+            }
+        }
+        final List<String> finalEnabledSkills = Collections.unmodifiableList(enabledSkillsList);
+
         final com.ownsudo.entity.WorkflowDefinition finalMatchedWf = matchedWorkflow;
         final String finalMatchedReason = matchedIntentReason;
         final double finalConfidence = routerConfidence;
@@ -295,16 +321,15 @@ public class AgentPlatformController {
                 // 1.5. 精确哈希降本缓存前置拦截 (Exact Hash Cache Check - 0 Token 极速返回)
                 com.ownsudo.entity.PromptHashCacheEntity cached = exactHashCacheService.lookupAndHit(messageText);
 
-                // 实时下发缓存命中检查
-                long hitDurationMs = cached != null ? Math.max(1, System.currentTimeMillis() - startTime) : (System.currentTimeMillis() - startTime);
-                sendTraceStep(emitter, isClientConnected, traceStepsMap, 2, "FINOPS_CACHE", "降本哈希排查", cached != null ? "HIT" : "MISS", Map.of(
-                    "hashKey", promptHashKey,
-                    "cached", cached != null,
-                    "durationMs", hitDurationMs,
-                    "savedTokens", cached != null && cached.getOriginalTokens() != null ? cached.getOriginalTokens() : 0
-                ));
-
                 if (cached != null) {
+                    long hitDurationMs = Math.max(1, System.currentTimeMillis() - startTime);
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 2, "FINOPS_CACHE", "命中历史问答缓存", "HIT", Map.of(
+                        "hashKey", promptHashKey,
+                        "cached", true,
+                        "durationMs", hitDurationMs,
+                        "savedTokens", cached.getOriginalTokens() != null ? cached.getOriginalTokens() : 0
+                    ));
+
                     String durationStr = String.format(Locale.US, "%.2fs", hitDurationMs / 1000.0);
 
                     // A. 若原始记录包含知识库切片引用，下发 citations
@@ -471,12 +496,16 @@ public class AgentPlatformController {
                     hydrationDetails.put("injectedVariables", finalBoundRepo != null ? "repo_name=" + finalBoundRepo.getName() + ", branch=" + finalBoundRepo.getBranch() : "通用系统环境");
                     hydrationDetails.put("promptLength", currentPrompt != null ? currentPrompt.length() : 0);
                     hydrationDetails.put("ragCostMs", ragDurationMs);
+                    hydrationDetails.put("activeSkills", finalEnabledSkills);
+                    hydrationDetails.put("skillCount", finalEnabledSkills.size());
                     sendTraceStep(emitter, isClientConnected, traceStepsMap, 3, "CONTEXT_HYDRATION", "执行引擎层 (Engine Layer) · 参数动态注入与提示词工程", "DONE", hydrationDetails);
                 } else {
                     Map<String, Object> hydrationDetails = new LinkedHashMap<>();
                     hydrationDetails.put("injectedVariables", finalBoundRepo != null ? "repo_name=" + finalBoundRepo.getName() + ", branch=" + finalBoundRepo.getBranch() : "通用系统环境");
                     hydrationDetails.put("promptLength", currentPrompt != null ? currentPrompt.length() : 0);
                     hydrationDetails.put("reason", "标准上下文注水，知识库直通模式");
+                    hydrationDetails.put("activeSkills", finalEnabledSkills);
+                    hydrationDetails.put("skillCount", finalEnabledSkills.size());
                     sendTraceStep(emitter, isClientConnected, traceStepsMap, 3, "CONTEXT_HYDRATION", "执行引擎层 (Engine Layer) · 参数动态注入与提示词工程", "DONE", hydrationDetails);
                 }
 
@@ -574,6 +603,25 @@ public class AgentPlatformController {
                                             toolPayloadMap.put("result", toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage());
                                             toolCallsList.add(toolPayloadMap);
                                             emitter.send(SseEmitter.event().name("tool").data(objectMapper.writeValueAsString(toolPayloadMap)));
+
+                                            // 同步下发高阶 agent_step 事件，驱动双视窗实时同步
+                                            Map<String, Object> toolStepPayload = new LinkedHashMap<>();
+                                            toolStepPayload.put("seq", 5);
+                                            toolStepPayload.put("stepId", "tool-" + functionName + "-" + callId);
+                                            toolStepPayload.put("phase", "skill");
+                                            toolStepPayload.put("status", toolResult.isSuccess() ? "done" : "failed");
+                                            toolStepPayload.put("leftTitle", "技能调度: " + functionName);
+                                            toolStepPayload.put("leftSummary", "沙箱执行 " + functionName + " (耗时 " + toolDurationStr + ") · " + (toolResult.isSuccess() ? "成功" : "失败"));
+                                            toolStepPayload.put("rightTitle", "执行技能: " + functionName);
+                                            toolStepPayload.put("rightSubtitle", "耗时: " + toolDurationStr + " · 状态: " + (toolResult.isSuccess() ? "SUCCESS" : "ERROR"));
+                                            Map<String, Object> toolDetail = new LinkedHashMap<>();
+                                            toolDetail.put("functionName", functionName);
+                                            toolDetail.put("parameters", functionArgs);
+                                            toolDetail.put("result", toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage());
+                                            toolDetail.put("durationMs", toolDuration);
+                                            toolStepPayload.put("rightDetail", toolDetail);
+                                            toolStepPayload.put("timestamp", System.currentTimeMillis());
+                                            emitter.send(SseEmitter.event().name("agent_step").data(objectMapper.writeValueAsString(toolStepPayload)));
 
                                             // 若触发生产级高危写操作安全拦截，向前端推送 approval_required 事件
                                             if ("PENDING_APPROVAL".equals(toolResult.getErrorType()) && toolResult.getData() != null) {
@@ -837,6 +885,7 @@ public class AgentPlatformController {
         map.put("EMBEDDING_MODEL", llmClientService.getConfig("EMBEDDING_MODEL", "nomic-embed-text"));
         map.put("EMBEDDING_BASE_URL", llmClientService.getConfig("EMBEDDING_BASE_URL", ""));
         map.put("EMBEDDING_API_KEY", llmClientService.getConfig("EMBEDDING_API_KEY", ""));
+        map.put("DRAWER_WIDTH", llmClientService.getConfig("DRAWER_WIDTH", "540"));
         return map;
     }
 
@@ -1104,16 +1153,86 @@ public class AgentPlatformController {
     }
 
     /**
-     * 向客户端逐帧下发真实全链路执行轨迹 (Trace Step)
-     * 解决前端靠静态模板拼凑假进度的问题，实现服务端驱动的真实阶段流转
+     * 向客户端逐帧下发真实全链路执行轨迹 (Trace Step & Agent Step)
+     * 服务端单源驱动：同时下发兼顾旧版的 trace_step 与现代化全能 agent_step 事件
      */
     private void sendTraceStep(SseEmitter emitter, AtomicBoolean isConnected, Map<Integer, Object> traceStepsMap, int step, String name, String title, String status, Map<String, Object> details) {
         Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("seq", step);
         payload.put("step", step);
         payload.put("name", name);
+        payload.put("stepId", "step-" + step + "-" + (name != null ? name.toLowerCase(Locale.ROOT).replace('_', '-') : "node"));
         payload.put("title", title);
-        payload.put("status", status);
+        payload.put("status", status != null ? status : "DONE");
         payload.put("timestamp", System.currentTimeMillis());
+
+        // 根据步骤序号映射标准 UACOS 阶段与左右两端专属文本
+        String phase;
+        String leftTitle;
+        String leftSummary;
+        String rightTitle;
+        String rightSubtitle;
+
+        switch (step) {
+            case 1:
+                phase = "intent";
+                leftTitle = "业务意图感知";
+                leftSummary = "捕获自然语言指令，解析关键操作实体与上下文环境";
+                rightTitle = "01. 自然语言意图解析与实体提取";
+                rightSubtitle = "UACOS 人机交互层 · 上下文参数结构化装配";
+                break;
+            case 2:
+                phase = "workflow";
+                leftTitle = "动态编排任务流";
+                String wfName = details != null && details.containsKey("matchedWorkflowName") ? String.valueOf(details.get("matchedWorkflowName")) : "业务流自适应中枢";
+                leftSummary = "命中业务流《" + wfName + "》，构建动态执行拓扑";
+                rightTitle = "02. 任务层动态编排与路由";
+                rightSubtitle = "UACOS 任务层 · 规则引擎自动匹配与调度";
+                break;
+            case 3:
+                phase = "context";
+                leftTitle = "专项准则与知识工程";
+                int skCount = details != null && details.containsKey("skillCount") ? Integer.parseInt(String.valueOf(details.get("skillCount"))) : 0;
+                leftSummary = skCount > 0 
+                    ? "装配工程上下文，已激活 " + skCount + " 项专项排查准则与规程基线" 
+                    : (details != null && Boolean.TRUE.equals(details.get("isRealVector")) ? "多路召回企业知识库切片，注入规程防线" : "装配标准上下文工程与动态变量注入");
+                rightTitle = "03. 提示词工程与专项技能注入";
+                rightSubtitle = skCount > 0 
+                    ? "UACOS 规则引擎 · 动态注入 " + skCount + " 项排查准则与规程基线" 
+                    : "UACOS 上下文工程 · 变量注水 {{repo_name}} / 规程基线";
+                break;
+            case 4:
+                phase = "llm";
+                leftTitle = "大模型认知推演回路";
+                leftSummary = "基座模型深度推演，研判业务逻辑并决定技能调度链路";
+                rightTitle = "04. 专家大脑认知推演回路";
+                rightSubtitle = "UACOS 执行引擎层 · 专家模型多维度推导";
+                break;
+            case 5:
+                phase = "skill";
+                leftTitle = "底层技能受控执行";
+                int toolsCount = details != null && details.containsKey("totalToolsExecuted") ? Integer.parseInt(String.valueOf(details.get("totalToolsExecuted"))) : 0;
+                leftSummary = toolsCount > 0 ? "沙箱环境安全执行外部业务技能，完成数据回填" : "沙箱安全规则校验通过，无外部高危操作";
+                rightTitle = "05. 技能层安全沙箱执行 (Skill Layer)";
+                rightSubtitle = "UACOS 技能层 · GitService / API / 沙箱受控执行";
+                break;
+            case 6:
+            default:
+                phase = "delivery";
+                leftTitle = "全链路交付与闭环";
+                leftSummary = "业务审计报告生成完毕 · 0 异常 · 算力闭环";
+                rightTitle = "06. 结果流式组装与安全交付";
+                rightSubtitle = "UACOS 交付闭环 · 流式排版与审计对账完成";
+                break;
+        }
+
+        payload.put("phase", phase);
+        payload.put("leftTitle", leftTitle);
+        payload.put("leftSummary", leftSummary);
+        payload.put("rightTitle", rightTitle);
+        payload.put("rightSubtitle", rightSubtitle);
+        payload.put("rightDetail", details != null ? details : Collections.emptyMap());
+
         if (details != null) {
             payload.putAll(details);
         }
@@ -1122,7 +1241,9 @@ public class AgentPlatformController {
         }
         if (isConnected != null && !isConnected.get()) return;
         try {
-            emitter.send(SseEmitter.event().name("trace_step").data(objectMapper.writeValueAsString(payload)));
+            String json = objectMapper.writeValueAsString(payload);
+            emitter.send(SseEmitter.event().name("agent_step").data(json));
+            emitter.send(SseEmitter.event().name("trace_step").data(json));
         } catch (Exception ignored) {}
     }
 

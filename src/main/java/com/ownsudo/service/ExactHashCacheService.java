@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -21,6 +22,18 @@ public class ExactHashCacheService {
 
     @Autowired
     private PromptHashCacheRepository cacheRepository;
+
+    @PostConstruct
+    public void purgeInvalidCacheEntries() {
+        try {
+            List<PromptHashCacheEntity> all = cacheRepository.findAll();
+            for (PromptHashCacheEntity e : all) {
+                if (isInvalidOrErrorContent(e.getContent())) {
+                    cacheRepository.deleteById(e.getHashKey());
+                }
+            }
+        } catch (Exception ignored) {}
+    }
 
     /**
      * 对原始提问进行规范化标准化处理：
@@ -59,6 +72,21 @@ public class ExactHashCacheService {
     }
 
     /**
+     * 判断内容是否属于报错、诊断提示或异常降级信息，严禁存入缓存或命中缓存
+     */
+    public boolean isInvalidOrErrorContent(String content) {
+        if (content == null || content.isBlank() || content.trim().length() < 10) return true;
+        return content.contains("大模型服务未就绪")
+                || content.contains("大模型通道未连通")
+                || content.contains("尚未连通或未配置有效")
+                || content.contains("无法完成实时 LLM 推理")
+                || content.contains("服务诊断提示")
+                || content.contains("Exception")
+                || content.contains("500 Internal")
+                || content.contains("服务不可用");
+    }
+
+    /**
      * 尝试命中缓存
      * 若命中，递增 hit_count 与 total_saved_tokens 并持久化
      */
@@ -72,6 +100,14 @@ public class ExactHashCacheService {
 
         if (opt.isPresent()) {
             PromptHashCacheEntity entry = opt.get();
+            // 严防脏数据：若缓存内容包含异常/未就绪，自动删除并视为未命中
+            if (isInvalidOrErrorContent(entry.getContent())) {
+                try {
+                    cacheRepository.deleteById(hashKey);
+                } catch (Exception ignored) {}
+                return null;
+            }
+
             entry.setHitCount(entry.getHitCount() + 1);
             int origTokens = entry.getOriginalTokens() != null ? entry.getOriginalTokens() : 0;
             entry.setTotalSavedTokens(entry.getTotalSavedTokens() + origTokens);
@@ -89,6 +125,11 @@ public class ExactHashCacheService {
     public PromptHashCacheEntity saveToCache(String rawPrompt, String content, String reasoning, String citationsJson, int tokens, long durationMs) {
         String normalized = normalizePrompt(rawPrompt);
         if (normalized.isBlank() || content == null || content.isBlank()) {
+            return null;
+        }
+
+        // 强门禁：凡属于报错提示、未就绪、或异常内容，一律禁止写入缓存
+        if (isInvalidOrErrorContent(content)) {
             return null;
         }
 
