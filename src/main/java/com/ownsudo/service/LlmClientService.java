@@ -137,10 +137,18 @@ public class LlmClientService {
 
         boolean isLocalOllama = configuredBaseUrl.contains("11434");
         boolean isOllamaCloud = configuredBaseUrl.contains("ollama.com");
+        boolean isDashScope = configuredBaseUrl.contains("dashscope.aliyuncs.com");
 
-        // 智能模型对齐：如果在 ollama.com 云端，但传入了仅在本地运行的旧模型名 deepseek-r1:8b，自动校正为云端支持的模型
+        // 智能模型对齐：
+        // 1. 如果是阿里云百炼 (DashScope)，若传入 deepseek-chat/coder 或非 qwen 系列，自动智能校正为云端支持的 configuredModel (qwen-plus)
         String model;
-        if (isOllamaCloud && (customModel == null || customModel.isBlank() || customModel.equals("deepseek-r1:8b") || customModel.equals("deepseek-chat"))) {
+        if (isDashScope) {
+            if (customModel != null && customModel.toLowerCase().startsWith("qwen-")) {
+                model = customModel;
+            } else {
+                model = configuredModel;
+            }
+        } else if (isOllamaCloud && (customModel == null || customModel.isBlank() || customModel.equals("deepseek-r1:8b") || customModel.equals("deepseek-chat"))) {
             model = configuredModel;
         } else if (customModel != null && !customModel.isBlank() && !customModel.equals("deepseek-chat")) {
             model = customModel;
@@ -270,7 +278,13 @@ public class LlmClientService {
         String configuredModel = getConfig("LLM_MODEL", "gemma4:31b-cloud");
         String apiKey = getConfig("LLM_API_KEY", getConfig("DEEPSEEK_API_KEY", ""));
 
-        String model = (customModel != null && !customModel.isBlank() && !customModel.equals("deepseek-chat")) ? customModel : configuredModel;
+        boolean isDashScope = configuredBaseUrl.contains("dashscope.aliyuncs.com");
+        String model;
+        if (isDashScope) {
+            model = (customModel != null && customModel.toLowerCase().startsWith("qwen-")) ? customModel : configuredModel;
+        } else {
+            model = (customModel != null && !customModel.isBlank() && !customModel.equals("deepseek-chat")) ? customModel : configuredModel;
+        }
         double temperature = customTemperature != null ? customTemperature : 0.7;
 
         String baseUrl = configuredBaseUrl;

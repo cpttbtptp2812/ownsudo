@@ -351,8 +351,9 @@ public class AgentPlatformController {
                 "2. 【结构化排版】：严格使用 Markdown 小标题（###）、清晰换行与重点列表（- ），严禁把多项内容黏在同一行或输出单行混乱表格；\n" +
                 "3. 【三段式业务化汇报】：\n" +
                 "   - ① 仓库总体概况：直接告诉客户当前挂载的代码库名称、分支、运行状态是否正常；\n" +
-                "   - ② 最新改动人话解读：说明最新一次提交是谁更新的、用通俗的语言解释这次改动了什么业务功能，不要只抄写英文提交信息；\n" +
+                "   - ② 解读：说明最新一次提交是谁更新的、用通俗的语言解释这次改动了什么业务功能，不要只抄写英文提交信息；\n" +
                 "   - ③ 风险诊断与建议：若发现潜在风险（如涉及带配置名称的文件），用大白话解释具体风险点（如'需确认是否包含真实密码，若是示例则安全'），并给出 1~2 个快捷指引；\n" +
+                "   - ④ 在回复最下方附上当前时间（当前时间：" + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "）；\n" +
                 "让客户与高管 10 秒看清全貌，放心决策。";
         } else {
             rawSystemPrompt = (rawSystemPrompt != null ? rawSystemPrompt : "") + "\n\n" +
@@ -747,7 +748,7 @@ public class AgentPlatformController {
                             "### 📊 代码仓库运行现状\n" +
                             "- **代码仓库**：`项目名称`（主分支：`分支名`）\n" +
                             "- **运行状态**：正常在线，已接入受控沙箱实时监控\n\n" +
-                            "### 📝 最新改动人话解读\n" +
+                            "### 📝 解读\n" +
                             "- **提交作者**：`作者名`\n" +
                             "- **改动内容**：用通俗易懂的中文大白话说明这次到底更新了什么业务功能，绝不直接照抄生硬英文\n\n" +
                             "### 🩺 安全与健康诊断\n" +
@@ -755,7 +756,8 @@ public class AgentPlatformController {
                             "- **排查建议**：若有风险（如配置文件命名），清晰说明原因与防范措施（如确认未含真实密码即可放行）\n\n" +
                             "### 💡 下一步指引\n" +
                             "给业务方 1~2 条简单快捷的后续操作建议（如：可随时指示“查看最近 5 条更新记录”或“查看具体代码改动”）。\n\n" +
-                            "请务必按照上述结构与 Markdown 空行规范输出！";
+                            "⏱️ **当前时间**：" + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "\n\n" +
+                            "请务必按照上述结构与 Markdown 空行规范输出，并在回复末尾附上上述当前时间！";
                     } else {
                         formattingGuide = "\n\n" +
                             "【排版与对话规范】:\n" +
