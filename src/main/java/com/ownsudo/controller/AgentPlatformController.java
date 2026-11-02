@@ -14,8 +14,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import jakarta.servlet.http.HttpServletRequest;
 
 import java.io.IOException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -87,6 +89,70 @@ public class AgentPlatformController {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
+    // ── 生产级风控防线：每个 IP 每日最多 5 轮，全站每日演示预算上限 1.00 元 ──
+    private final ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger> dailyIpUsageMap = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicInteger dailyTotalTokens = new java.util.concurrent.atomic.AtomicInteger(0);
+    private volatile String currentQuotaDate = LocalDate.now().toString();
+
+    private static final int DEFAULT_MAX_ROUNDS_PER_IP = 5;
+    private static final int DEFAULT_DAILY_TOKEN_LIMIT = 100_000; // 约合 ¥1.00 (通义千问 qwen-plus 算力额度)
+
+    private void checkAndResetDailyQuota() {
+        String today = LocalDate.now().toString();
+        if (!today.equals(currentQuotaDate)) {
+            synchronized (this) {
+                if (!today.equals(currentQuotaDate)) {
+                    currentQuotaDate = today;
+                    dailyIpUsageMap.clear();
+                    dailyTotalTokens.set(0);
+                    log.info("[风控中枢] 新的一天到达 ({})，已自动重置 IP 提问额度与全站每日算力账单", today);
+                }
+            }
+        }
+    }
+
+    private String resolveClientIp(HttpServletRequest request) {
+        if (request == null) return "127.0.0.1";
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip != null && !ip.isBlank() && !"unknown".equalsIgnoreCase(ip)) {
+            return ip.split(",")[0].trim();
+        }
+        ip = request.getHeader("X-Real-IP");
+        if (ip != null && !ip.isBlank() && !"unknown".equalsIgnoreCase(ip)) {
+            return ip.trim();
+        }
+        String remote = request.getRemoteAddr();
+        return (remote != null && !remote.isBlank()) ? remote : "127.0.0.1";
+    }
+
+    @GetMapping("/system/quota-status")
+    public Map<String, Object> getQuotaStatus(HttpServletRequest servletRequest) {
+        checkAndResetDailyQuota();
+        String clientIp = resolveClientIp(servletRequest);
+        String ipKey = currentQuotaDate + ":" + clientIp;
+        int currentIpRounds = dailyIpUsageMap.computeIfAbsent(ipKey, k -> new java.util.concurrent.atomic.AtomicInteger(0)).get();
+        int maxRoundsPerIp = DEFAULT_MAX_ROUNDS_PER_IP;
+        try {
+            String cfgVal = llmClientService.getConfig("RATE_LIMIT_PER_IP_DAILY", String.valueOf(DEFAULT_MAX_ROUNDS_PER_IP));
+            maxRoundsPerIp = Integer.parseInt(cfgVal);
+        } catch (Exception ignored) {}
+
+        int totalTokensToday = dailyTotalTokens.get();
+        double estimatedCostRmb = (totalTokensToday / 1000.0) * 0.01;
+
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("date", currentQuotaDate);
+        res.put("clientIp", clientIp);
+        res.put("ipUsedRounds", currentIpRounds);
+        res.put("ipMaxRounds", maxRoundsPerIp);
+        res.put("ipRemainingRounds", Math.max(0, maxRoundsPerIp - currentIpRounds));
+        res.put("totalTokensToday", totalTokensToday);
+        res.put("estimatedCostRmb", String.format(Locale.US, "%.3f", estimatedCostRmb));
+        res.put("dailyBudgetCapRmb", 1.00);
+        res.put("isBudgetExceeded", totalTokensToday >= DEFAULT_DAILY_TOKEN_LIMIT);
+        return res;
+    }
+
     @GetMapping("/agents")
     public List<AgentEntity> getAgents() {
         List<AgentEntity> list = agentRepository.findAllByOrderByCreatedAtDesc();
@@ -150,9 +216,30 @@ public class AgentPlatformController {
     }
 
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter streamChat(@RequestBody Map<String, Object> req) {
+    public SseEmitter streamChat(@RequestBody Map<String, Object> req, HttpServletRequest servletRequest) {
         SseEmitter emitter = new SseEmitter(120_000L);
         long startTime = System.currentTimeMillis();
+
+        checkAndResetDailyQuota();
+        final String clientIp = resolveClientIp(servletRequest);
+
+        int maxRoundsPerIp = DEFAULT_MAX_ROUNDS_PER_IP;
+        try {
+            String cfgVal = llmClientService.getConfig("RATE_LIMIT_PER_IP_DAILY", String.valueOf(DEFAULT_MAX_ROUNDS_PER_IP));
+            maxRoundsPerIp = Integer.parseInt(cfgVal);
+        } catch (Exception ignored) {}
+
+        int dailyTokenLimit = DEFAULT_DAILY_TOKEN_LIMIT;
+        try {
+            String cfgVal = llmClientService.getConfig("DAILY_TOKEN_LIMIT", String.valueOf(DEFAULT_DAILY_TOKEN_LIMIT));
+            dailyTokenLimit = Integer.parseInt(cfgVal);
+        } catch (Exception ignored) {}
+
+        final boolean isDailyBudgetExceeded = dailyTotalTokens.get() >= dailyTokenLimit;
+        final boolean isLocalDev = "127.0.0.1".equals(clientIp) || "0:0:0:0:0:0:0:1".equals(clientIp) || "localhost".equalsIgnoreCase(clientIp);
+        final String ipKey = currentQuotaDate + ":" + clientIp;
+        final int currentIpRounds = dailyIpUsageMap.computeIfAbsent(ipKey, k -> new java.util.concurrent.atomic.AtomicInteger(0)).get();
+        final boolean isIpLimitExceeded = !isLocalDev && currentIpRounds >= maxRoundsPerIp;
 
         String sessionId = (String) req.getOrDefault("sessionId", "s-" + UUID.randomUUID().toString().substring(0, 8));
         String messageText = (String) req.getOrDefault("message", "");
@@ -316,6 +403,51 @@ public class AgentPlatformController {
             List<Map<String, Object>> toolCallsList = new CopyOnWriteArrayList<>();
             AtomicReference<Object> approvalTicketRef = new AtomicReference<>(null);
             try {
+                // ── 风控防线 A: 全站每日预算上限拦截 (每天最多 ¥1.00，约 10 万 Tokens) ──
+                if (isDailyBudgetExceeded) {
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 1, "CLIENT_REQUEST", "人机交互层 · 访客安全验证", "DONE", Map.of("clientIp", clientIp, "status", "全站演示预算已满"));
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 2, "INTENT_ROUTER", "任务调度中枢 · 算力风控熔断", "DONE", Map.of("intentLabel", "全站每日算力预算熔断保护", "slotTags", List.of("触发每日 ¥1.00 预算上限", "已自动切断云端调用")));
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 3, "SAFETY_BASELINE", "规程防线 · 每日成本熔断规则生效", "DONE", Map.of("rule", "RULE-FINOPS-001 每日预算上限 ¥1.00"));
+
+                    String notice = "> 🛡️ **【今日全站体验算力预算已达上限（¥1.00 / 天）】**\n\n"
+                            + "今日全站免费演示算力预算（¥1.00 额度，约 10 万 Tokens）已全额消耗完毕。系统已自动启动安全熔断防线，保护云资源账户安全。\n\n"
+                            + "**如何继续体验：**\n"
+                            + "1. **明日自动重置**：每日 00:00 演示额度将自动恢复满额；\n"
+                            + "2. **配置私有 API Key**：前往左侧导航栏 **「设置 / 治理」** 填入您自己的 API Key（阿里云、DeepSeek 等），不受全站演示预算限制；\n"
+                            + "3. **切换本地 Ollama**：在「设置」中切换为「本地 Ollama」，零成本无限畅聊。\n";
+
+                    emitter.send(SseEmitter.event().name("delta").data(notice));
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 6, "STREAM_DELIVERY", "把关交活 · 预算熔断拦截交付", "DONE", Map.of("result", "预算防护生效，已阻断云端扣费"));
+                    emitter.send(SseEmitter.event().name("finish").data("{\"tokens\":0,\"duration\":\"0.1s\"}"));
+                    emitter.complete();
+                    return;
+                }
+
+                // ── 风控防线 B: 单 IP 每日限额拦截 (每个 IP 每天最多提问 5 轮) ──
+                if (isIpLimitExceeded) {
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 1, "CLIENT_REQUEST", "人机交互层 · 访客身份识别", "DONE", Map.of("clientIp", clientIp, "status", "单IP体验频次达标"));
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 2, "INTENT_ROUTER", "任务调度中枢 · 单IP额度风控", "DONE", Map.of("intentLabel", "单IP每日 5 轮限额保护", "slotTags", List.of("访客IP: " + clientIp, "已达 5/5 次上限")));
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 3, "SAFETY_BASELINE", "规程防线 · 防恶意刷量规则生效", "DONE", Map.of("rule", "RULE-SEC-RATE-005 单 IP 每日上限 5 轮"));
+
+                    String notice = "> ⚠️ **【体验额度已达上限（5/5 轮）】**\n\n"
+                            + "您所在的 IP（`" + clientIp + "`）今日免费体验提问已达 **5 轮** 上限。\n\n"
+                            + "**防刷保护说明：**\n"
+                            + "本平台为企业级演示系统，为避免公共演示接口被恶意高频刷取，限制单 IP 每日免费体验 5 轮。\n\n"
+                            + "**如何继续使用：**\n"
+                            + "1. **明日自动重置**：明日 00:00 您所在 IP 的 5 次体验机会将自动恢复；\n"
+                            + "2. **配置专属 API Key**：前往左侧导航栏 **「设置 / 治理」** 填入您自己的 API Key（通义千问 / DeepSeek / 硅基流动等），畅享无限制对话；\n"
+                            + "3. **切换本地模型**：在「设置」中切换为「本地 Ollama」，完全免费且无任何次数限制。\n";
+
+                    emitter.send(SseEmitter.event().name("delta").data(notice));
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 6, "STREAM_DELIVERY", "把关交活 · 频次风控拦截交付", "DONE", Map.of("result", "单IP防刷拦截生效，保护算力资源"));
+                    emitter.send(SseEmitter.event().name("finish").data("{\"tokens\":0,\"duration\":\"0.1s\"}"));
+                    emitter.complete();
+                    return;
+                }
+
+                // 正常放行：累加该 IP 本日的访问轮数
+                dailyIpUsageMap.computeIfAbsent(ipKey, k -> new java.util.concurrent.atomic.AtomicInteger(0)).incrementAndGet();
+
                 ChatMessageEntity userMsg = new ChatMessageEntity();
                 userMsg.setId("msg-" + UUID.randomUUID().toString().substring(0, 8));
                 userMsg.setSessionId(sessionId);
@@ -848,6 +980,7 @@ public class AgentPlatformController {
                             promptTokensRef.set(pTokens);
                             completionTokensRef.set(cTokens);
                             hasRealUsageRef.set(true);
+                            dailyTotalTokens.addAndGet(pTokens + cTokens);
                         },
                         isClientConnected
                 );
