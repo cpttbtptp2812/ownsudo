@@ -185,9 +185,23 @@ public class AgentPlatformController {
         double routerConfidence = 0.95;
         com.ownsudo.entity.GitRepositoryEntity boundRepo = null;
 
+        String lowerText = messageText != null ? messageText.toLowerCase(Locale.ROOT) : "";
+        boolean isGitOrCodeTask = lowerText.contains("git") ||
+                lowerText.contains("commit") ||
+                lowerText.contains("状态") ||
+                lowerText.contains("排查") ||
+                lowerText.contains("最新") ||
+                lowerText.contains("分支") ||
+                lowerText.contains("diff") ||
+                lowerText.contains("提交") ||
+                lowerText.contains("审查") ||
+                lowerText.contains("代码") ||
+                lowerText.contains("仓库") ||
+                lowerText.contains("status") ||
+                lowerText.contains("log");
+
         if (workflowDefinitionRepository != null) {
             List<com.ownsudo.entity.WorkflowDefinition> allWfs = workflowDefinitionRepository.findAllByOrderBySortOrderAscCreatedAtDesc();
-            String lowerText = messageText.toLowerCase();
             for (com.ownsudo.entity.WorkflowDefinition wf : allWfs) {
                 boolean hit = false;
                 if (wf.getTags() != null) {
@@ -204,7 +218,7 @@ public class AgentPlatformController {
                     matchedIntentReason = "名称特征命中 [" + wf.getName() + "]";
                 }
                 if (!hit && (wf.getId().contains("git") || "代码协同".equals(wf.getCategory()))) {
-                    if (lowerText.contains("git") || lowerText.contains("commit") || lowerText.contains("更新") || lowerText.contains("代码") || lowerText.contains("分支") || lowerText.contains("diff") || lowerText.contains("提交") || lowerText.contains("审查") || lowerText.contains("仓库")) {
+                    if (isGitOrCodeTask) {
                         hit = true;
                         matchedIntentReason = "核心业务实体命中 [Git 代码仓库与 Commit 审计特征]";
                         routerConfidence = 0.992;
@@ -212,6 +226,7 @@ public class AgentPlatformController {
                 }
                 if (hit) {
                     matchedWorkflow = wf;
+                    isGitOrCodeTask = true;
                     break;
                 }
             }
@@ -239,6 +254,24 @@ public class AgentPlatformController {
             if (boundRepo != null) {
                 rawSystemPrompt += "\n\n【系统级工具授权提示】：已为你自动挂载受控代码仓库（仓库名：" + boundRepo.getName() + "，主分支：" + boundRepo.getBranch() + "）。当用户要求查看更新记录、提交历史、代码差异时，你必须直接调用系统提供的 get_git_commit_history 或 get_git_commit_diff 工具获取真实数据后再生成审计结论！";
             }
+        }
+
+        // 仅在明确是代码/Git任务时才注入代码仓库汇报规范；日常对话与通用问答保持温暖自然交流
+        if (isGitOrCodeTask) {
+            rawSystemPrompt = (rawSystemPrompt != null ? rawSystemPrompt : "") + "\n\n" +
+                "【最终回答呈现规范（面向管理层与业务客户）】：\n" +
+                "1. 【通俗大白话】：用人人都看得懂的中文大白话作答！严禁输出底层机器编号（如 repo-0aac5a67）、生僻参数（如 commit_sha=xxx、filePath）或未格式化的机器字符串；\n" +
+                "2. 【结构化排版】：严格使用 Markdown 小标题（###）、清晰换行与重点列表（- ），严禁把多项内容黏在同一行或输出单行混乱表格；\n" +
+                "3. 【三段式业务化汇报】：\n" +
+                "   - ① 仓库总体概况：直接告诉客户当前挂载的代码库名称、分支、运行状态是否正常；\n" +
+                "   - ② 最新改动人话解读：说明最新一次提交是谁更新的、用通俗的语言解释这次改动了什么业务功能，不要只抄写英文提交信息；\n" +
+                "   - ③ 风险诊断与建议：若发现潜在风险（如涉及带配置名称的文件），用大白话解释具体风险点（如'需确认是否包含真实密码，若是示例则安全'），并给出 1~2 个快捷指引；\n" +
+                "让客户与高管 10 秒看清全貌，放心决策。";
+        } else {
+            rawSystemPrompt = (rawSystemPrompt != null ? rawSystemPrompt : "") + "\n\n" +
+                "【通用交互回答规范】：\n" +
+                "1. 严格使用清晰的 Markdown 换行排版；\n" +
+                "2. 语言亲切自然、通俗温暖；根据用户意图直接回答，若用户表达疲劳、困倦或日常闲聊，给予贴心关怀与放松小建议，严禁套用代码仓库巡检或技术报告模板。";
         }
 
         // 动态加载 Tab 3 中的排查准则与技能白名单 (Tab 3 Skills/Rules Injection)
@@ -271,6 +304,7 @@ public class AgentPlatformController {
         final com.ownsudo.entity.GitRepositoryEntity finalBoundRepo = boundRepo;
         final String activeAgentName = agentName;
         final String effectiveSystemPrompt = rawSystemPrompt;
+        final boolean finalIsGitOrCodeTask = isGitOrCodeTask;
         AtomicBoolean isClientConnected = new AtomicBoolean(true);
 
         emitter.onCompletion(() -> isClientConnected.set(false));
@@ -308,18 +342,71 @@ public class AgentPlatformController {
                 ));
 
                 // 实时下发步骤 2: 任务层 (Task Layer) · 意图智能研判与业务流装载
-                sendTraceStep(emitter, isClientConnected, traceStepsMap, 2, "INTENT_ROUTER", "任务层 (Task Layer) · 意图智能研判与业务流装载", "DONE", Map.of(
-                    "matchedWorkflowId", finalMatchedWf != null ? finalMatchedWf.getId() : "default-chat",
-                    "matchedWorkflowName", finalMatchedWf != null ? finalMatchedWf.getName() : "通用智能对话助理",
-                    "confidence", (int)(finalConfidence * 100) + "%",
-                    "matchedReason", finalMatchedReason,
-                    "autoDispatched", true,
-                    "workflowCategory", finalMatchedWf != null ? (finalMatchedWf.getCategory() != null ? finalMatchedWf.getCategory() : "业务流中台") : "通用对话",
-                    "mountedRepo", finalBoundRepo != null ? finalBoundRepo.getName() + " (" + finalBoundRepo.getBranch() + ")" : "无关联外部数据源"
-                ));
+                String intentLabel;
+                String intentCategory;
+                String extractedEntitiesDesc;
+                List<String> slotTags = new ArrayList<>();
+
+                if (finalIsGitOrCodeTask) {
+                    intentLabel = "代码工程实时巡检与提交审计";
+                    intentCategory = "工程运维/代码审计";
+                    String rName = finalBoundRepo != null ? finalBoundRepo.getName() : "builder";
+                    String rBranch = finalBoundRepo != null ? finalBoundRepo.getBranch() : "main";
+                    extractedEntitiesDesc = "锁定代码仓库：" + rName + " (分支: " + rBranch + ") · 范围: 仓库运行状态与最新改动";
+                    slotTags.add("代码库: " + rName);
+                    slotTags.add("分支: " + rBranch);
+                } else {
+                    String lower = messageText != null ? messageText.toLowerCase(Locale.ROOT) : "";
+                    if (lower.contains("困") || lower.contains("累") || lower.contains("歇") || lower.contains("睡") || lower.contains("难受") || lower.contains("休息")) {
+                        intentLabel = "身心状态表达与关怀问候";
+                        intentCategory = "日常关怀/情绪感知";
+                        extractedEntitiesDesc = "识别用户身心状态：疲倦/困倦 · 保持当前会话上下文 · 纯文本生成模式";
+                        slotTags.add("用户状态: 困倦疲乏");
+                        slotTags.add("免挂载数据源");
+                    } else if (lower.contains("你好") || lower.contains("早") || lower.contains("嗨") || lower.contains("hello") || lower.contains("hi")) {
+                        intentLabel = "问候礼貌交互";
+                        intentCategory = "日常问候";
+                        extractedEntitiesDesc = "识别日常问候礼仪 · 保持当前会话上下文 · 纯文本生成模式";
+                        slotTags.add("问候交互");
+                        slotTags.add("免挂载数据源");
+                    } else {
+                        intentLabel = "通用自然语言理解与知识解答";
+                        intentCategory = "通用问答";
+                        extractedEntitiesDesc = "识别通用问答场景 · 纯认知生成 · 无外部代码工程依赖";
+                        slotTags.add("通用文本交互");
+                        slotTags.add("免挂载数据源");
+                    }
+                }
+
+                Map<String, Object> routerDetails = new LinkedHashMap<>();
+                routerDetails.put("matchedWorkflowId", finalMatchedWf != null ? finalMatchedWf.getId() : "default-chat");
+                routerDetails.put("matchedWorkflowName", finalMatchedWf != null ? finalMatchedWf.getName() : "通用智能对话助理");
+                routerDetails.put("confidence", (int)(finalConfidence * 100) + "%");
+                routerDetails.put("matchedReason", finalMatchedReason);
+                routerDetails.put("autoDispatched", true);
+                routerDetails.put("intentLabel", intentLabel);
+                routerDetails.put("intentCategory", intentCategory);
+                routerDetails.put("extractedEntities", extractedEntitiesDesc);
+                routerDetails.put("slotTags", slotTags);
+                routerDetails.put("workflowCategory", finalMatchedWf != null ? (finalMatchedWf.getCategory() != null ? finalMatchedWf.getCategory() : "业务流中台") : "通用对话");
+                routerDetails.put("mountedRepo", finalBoundRepo != null ? finalBoundRepo.getName() + " (" + finalBoundRepo.getBranch() + ")" : "无关联外部数据源");
+
+                sendTraceStep(emitter, isClientConnected, traceStepsMap, 2, "INTENT_ROUTER", "任务层 (Task Layer) · 意图智能研判与业务流装载", "DONE", routerDetails);
 
                 // 1.5. 精确哈希降本缓存前置拦截 (Exact Hash Cache Check - 0 Token 极速返回)
-                com.ownsudo.entity.PromptHashCacheEntity cached = exactHashCacheService.lookupAndHit(messageText);
+                // 强门禁：凡涉及代码工程、Git 仓库、现场状态巡检等实时动态任务，严禁走静态缓存，确保受控沙箱现场真实执行
+                String lowerMessage = messageText != null ? messageText.toLowerCase(Locale.ROOT) : "";
+                boolean isDynamicStatusQuery = lowerMessage.contains("git") ||
+                        lowerMessage.contains("commit") ||
+                        lowerMessage.contains("状态") ||
+                        lowerMessage.contains("排查") ||
+                        lowerMessage.contains("最新") ||
+                        lowerMessage.contains("分支") ||
+                        lowerMessage.contains("diff") ||
+                        lowerMessage.contains("status") ||
+                        lowerMessage.contains("log");
+
+                com.ownsudo.entity.PromptHashCacheEntity cached = isDynamicStatusQuery ? null : exactHashCacheService.lookupAndHit(messageText);
 
                 if (cached != null) {
                     long hitDurationMs = Math.max(1, System.currentTimeMillis() - startTime);
@@ -518,7 +605,33 @@ public class AgentPlatformController {
 
                 List<Map<String, Object>> messages = new ArrayList<>();
                 if (!currentPrompt.isBlank()) {
-                    messages.add(Map.of("role", "system", "content", currentPrompt));
+                    String formattingGuide;
+                    if (finalIsGitOrCodeTask) {
+                        formattingGuide = "\n\n" +
+                            "【🚨 极重要格式与排版铁律（面向企业高管与客户）】:\n" +
+                            "1. 【严格换行】：严禁将所有文字挤在单行！标题前必须空一行，段落与段落之间必须空一行（双换行），列表项每行一条（- 开头）！\n" +
+                            "2. 【严禁生涩黑话】：绝对不要输出底层机器编号（如 repo-0aac5a67）、生僻参数（如 commit_sha=xxx、filePath）或未格式化的机器字符串；\n" +
+                            "3. 【业务化三段式汇报格式模板】：\n\n" +
+                            "### 📊 代码仓库运行现状\n" +
+                            "- **代码仓库**：`项目名称`（主分支：`分支名`）\n" +
+                            "- **运行状态**：正常在线，已接入受控沙箱实时监控\n\n" +
+                            "### 📝 最新改动人话解读\n" +
+                            "- **提交作者**：`作者名`\n" +
+                            "- **改动内容**：用通俗易懂的中文大白话说明这次到底更新了什么业务功能，绝不直接照抄生硬英文\n\n" +
+                            "### 🩺 安全与健康诊断\n" +
+                            "- **诊断结论**：说明当前代码库是否安全、是否存在潜在隐患\n" +
+                            "- **排查建议**：若有风险（如配置文件命名），清晰说明原因与防范措施（如确认未含真实密码即可放行）\n\n" +
+                            "### 💡 下一步指引\n" +
+                            "给业务方 1~2 条简单快捷的后续操作建议（如：可随时指示“查看最近 5 条更新记录”或“查看具体代码改动”）。\n\n" +
+                            "请务必按照上述结构与 Markdown 空行规范输出！";
+                    } else {
+                        formattingGuide = "\n\n" +
+                            "【排版与对话规范】:\n" +
+                            "1. 严格使用清晰的 Markdown 排版，段落之间保持空行；\n" +
+                            "2. 根据用户提问自然作答，亲切友好、温暖贴心；若用户表达疲劳、困倦或闲聊，给予贴心关怀与放松建议，切勿套用代码仓库报告模板。";
+                    }
+
+                    messages.add(Map.of("role", "system", "content", currentPrompt + formattingGuide));
                 }
                 for (ChatMessageEntity h : history) {
                     if ("user".equals(h.getRole()) || "assistant".equals(h.getRole())) {
@@ -527,6 +640,13 @@ public class AgentPlatformController {
                 }
 
                 // 5. 真实工具调用闭环 (大模型驱动，彻底杜绝关键词旁路与假调用)
+                // 实时通知前端进入“03. 动手排查”阶段 (沙箱工具调度与专家大脑推演)
+                if (finalIsGitOrCodeTask) {
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 4, "LLM_REASONING", "专家大脑协同作业与现场排查", "RUNNING", Map.of("mode", "沙箱受控执行与认知推演"));
+                } else {
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 4, "LLM_REASONING", "专家大脑认知推演与回复生成", "RUNNING", Map.of("mode", "通用对话认知理解与共情构思"));
+                }
+
                 int currentDepth = 1;
                 List<Map<String, Object>> toolDefs = toolExecutor.getToolDefinitions();
                 int totalToolsExecuted = 0;
@@ -791,8 +911,8 @@ public class AgentPlatformController {
                 // 9. 异步事实提炼 (从真实对话提炼事实，绝不凭空捏造假偏好)
                 agentMemoryService.asyncExtractFact(sessionId, messageText, replyBuffer.toString());
 
-                // 10. 保存至 Exact Hash Cache (规范化 SHA-256 存储，供后续二次调用极速复用)
-                if (!wasAborted && replyBuffer.length() > 0) {
+                // 10. 保存至 Exact Hash Cache (规范化 SHA-256 存储，仅限纯知识问答，动态实时/工具调用类严禁缓存)
+                if (!wasAborted && !isDynamicStatusQuery && totalToolsExecuted == 0 && replyBuffer.length() >= 50) {
                     try {
                         String citJson = (citationsList != null && !citationsList.isEmpty()) ? objectMapper.writeValueAsString(citationsList) : null;
                         int tokenCost = hasRealUsageRef.get() ? completionTokensRef.get() : Math.max(1, replyBuffer.length() / 2);

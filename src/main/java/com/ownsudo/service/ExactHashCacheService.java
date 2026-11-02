@@ -75,7 +75,7 @@ public class ExactHashCacheService {
      * 判断内容是否属于报错、诊断提示或异常降级信息，严禁存入缓存或命中缓存
      */
     public boolean isInvalidOrErrorContent(String content) {
-        if (content == null || content.isBlank() || content.trim().length() < 10) return true;
+        if (content == null || content.isBlank() || content.trim().length() < 40) return true;
         return content.contains("大模型服务未就绪")
                 || content.contains("大模型通道未连通")
                 || content.contains("尚未连通或未配置有效")
