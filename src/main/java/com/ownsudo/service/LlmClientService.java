@@ -186,7 +186,6 @@ public class LlmClientService {
             reqBuilder.header("Authorization", "Bearer " + apiKey.trim());
         }
 
-        onReasoning.accept("正在向推理端点 (" + endpoint + ") 发起流式推理 [模型: " + model + ", 温度: " + temperature + "]...");
 
         // 【致命雷 2 防线：物理级 Cancel 拦截】使用 sendAsync，若连接建立期间客户端断开，立即调用 future.cancel(true) 物理中断 TCP/HTTP 连接
         java.util.concurrent.CompletableFuture<HttpResponse<java.util.stream.Stream<String>>> future =

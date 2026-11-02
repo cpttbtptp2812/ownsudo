@@ -457,6 +457,8 @@ public class AgentPlatformController {
                 userMsg.setTokens(0);
                 messageRepository.save(userMsg);
 
+                final StringBuilder reasoningBuffer = new StringBuilder();
+
                 Boolean enableRag = (Boolean) req.getOrDefault("enableRAG", true);
                 Boolean enableThinking = (Boolean) req.getOrDefault("enableThinking", true);
                 Boolean enableWebSearch = (Boolean) req.getOrDefault("enableWebSearch", false);
@@ -525,6 +527,16 @@ public class AgentPlatformController {
                 routerDetails.put("mountedRepo", finalBoundRepo != null ? finalBoundRepo.getName() + " (" + finalBoundRepo.getBranch() + ")" : "无关联外部数据源");
 
                 sendTraceStep(emitter, isClientConnected, traceStepsMap, 2, "INTENT_ROUTER", "任务层 (Task Layer) · 意图智能研判与业务流装载", "DONE", routerDetails);
+
+                if (isClientConnected.get()) {
+                    try {
+                        String rText = finalIsGitOrCodeTask
+                                ? "用户发起了代码巡检，我来先看一下当前本地工作区的代码状态与最新提交记录。\n"
+                                : "理解了用户的问题，我来理清思路，用通俗易懂的大白话直接给出解答。\n";
+                        reasoningBuffer.append(rText);
+                        emitter.send(SseEmitter.event().name("reasoning").data(rText));
+                    } catch (IOException ignored) {}
+                }
 
                 // 1.5. 精确哈希降本缓存前置拦截 (Exact Hash Cache Check - 0 Token 极速返回)
                 // 强门禁：凡涉及代码工程、Git 仓库、现场状态巡检等实时动态任务，严禁走静态缓存，确保受控沙箱现场真实执行
@@ -729,6 +741,21 @@ public class AgentPlatformController {
                     sendTraceStep(emitter, isClientConnected, traceStepsMap, 3, "CONTEXT_HYDRATION", "执行引擎层 (Engine Layer) · 参数动态注入与提示词工程", "DONE", hydrationDetails);
                 }
 
+                if (isClientConnected.get()) {
+                    try {
+                        String rText;
+                        if (finalIsGitOrCodeTask) {
+                            String rName = finalBoundRepo != null ? finalBoundRepo.getName() : "builder";
+                            String rBranch = finalBoundRepo != null ? finalBoundRepo.getBranch() : "main";
+                            rText = "确认目标代码库，目前工作区在 " + rName + "（" + rBranch + " 分支）。\n";
+                        } else {
+                            rText = "梳理回答的核心要点，组织通顺清晰的语言。\n";
+                        }
+                        reasoningBuffer.append(rText);
+                        emitter.send(SseEmitter.event().name("reasoning").data(rText));
+                    } catch (IOException ignored) {}
+                }
+
                 // 4. 上下文滑动窗口：严格截断最近 3 轮 (最多 6 条历史消息：3 user + 3 assistant)
                 List<ChatMessageEntity> allHistory = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
                 int maxHistory = 6;
@@ -826,10 +853,40 @@ public class AgentPlatformController {
                                     String functionName = toolCallNode.path("function").path("name").asText();
                                     String functionArgs = toolCallNode.path("function").path("arguments").asText("{}");
 
+                                    if (isClientConnected.get()) {
+                                        try {
+                                            String rText;
+                                            if (functionName.contains("status")) {
+                                                rText = "执行 git status 查看一下，看看哪些文件刚刚被改动过、有没有未暂存的代码……\n";
+                                            } else if (functionName.contains("log")) {
+                                                rText = "查一下最近的 git log 提交历史，看看最新的一次 commit 改了什么、是谁提交的……\n";
+                                            } else {
+                                                rText = "调取现场数据，执行 " + functionName + " 排查具体变动……\n";
+                                            }
+                                            reasoningBuffer.append(rText);
+                                            emitter.send(SseEmitter.event().name("reasoning").data(rText));
+                                        } catch (IOException ignored) {}
+                                    }
+
                                     long toolStart = System.currentTimeMillis();
                                     ToolExecutor.ToolExecutionResult toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
                                     long toolDuration = System.currentTimeMillis() - toolStart;
                                     String toolDurationStr = toolDuration + "ms";
+
+                                    if (isClientConnected.get()) {
+                                        try {
+                                            String rText;
+                                            if (functionName.contains("status")) {
+                                                rText = "工作区状态拿到了，已掌握改动的文件清单。\n";
+                                            } else if (functionName.contains("log")) {
+                                                rText = "最新提交记录拿到了，改动要点已明确。\n";
+                                            } else {
+                                                rText = "现场数据已获取完毕。\n";
+                                            }
+                                            reasoningBuffer.append(rText);
+                                            emitter.send(SseEmitter.event().name("reasoning").data(rText));
+                                        } catch (IOException ignored) {}
+                                    }
 
                                     // 全链路审计入库：记录工具名、参数 JSON、耗时与状态
                                     AuditLogEntity toolAudit = new AuditLogEntity();
@@ -946,9 +1003,18 @@ public class AgentPlatformController {
                     ));
                 }
 
+                if (isClientConnected.get()) {
+                    try {
+                        String rText = finalIsGitOrCodeTask
+                                ? "把工作区现场变动和最新提交串联起来，梳理出通俗易懂的解读，按规矩附上当前时间，现在开始整理汇报。\n\n"
+                                : "思路已经理顺，现在开始生成详细回答。\n\n";
+                        reasoningBuffer.append(rText);
+                        emitter.send(SseEmitter.event().name("reasoning").data(rText));
+                    } catch (IOException ignored) {}
+                }
+
                 // 6. 流式推流自然语言回答 (经由多模型故障转移网关 ModelGatewayService 调度)
                 StringBuilder replyBuffer = new StringBuilder();
-                StringBuilder reasoningBuffer = new StringBuilder();
                 java.util.concurrent.atomic.AtomicInteger promptTokensRef = new java.util.concurrent.atomic.AtomicInteger(0);
                 java.util.concurrent.atomic.AtomicInteger completionTokensRef = new java.util.concurrent.atomic.AtomicInteger(0);
                 java.util.concurrent.atomic.AtomicBoolean hasRealUsageRef = new java.util.concurrent.atomic.AtomicBoolean(false);
