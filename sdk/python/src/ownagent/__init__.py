@@ -7,10 +7,10 @@ from .worker import LocalWorker
 __all__ = [
     "Action",
     "ActionEvent",
-    "TraceSpan",
     "LocalWorker",
     "OwnAgentAPIError",
     "OwnAgentClient",
     "OwnAgentError",
     "OwnAgentTimeoutError",
+    "TraceSpan",
 ]
