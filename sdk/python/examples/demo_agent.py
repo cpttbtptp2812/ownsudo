@@ -158,7 +158,7 @@ def run_agent(
             except json.JSONDecodeError as exc:
                 raise RuntimeError(f"Model returned invalid tool arguments: {exc}") from exc
             if not isinstance(arguments, dict):
-                raise RuntimeError("Tool arguments must be a JSON object")
+                raise TypeError("Tool arguments must be a JSON object")
 
             action = ownagent.create_action(
                 tool_name,
