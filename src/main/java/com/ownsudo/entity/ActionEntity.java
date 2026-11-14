@@ -50,10 +50,10 @@ public class ActionEntity {
     private LocalDateTime leaseUntil;
     @Column(name = "approval_status", length = 16)
     private String approvalStatus;
-    @Column(name = "approved_by", length = 128)
-    private String approvedBy;
-    @Column(name = "approved_at")
-    private LocalDateTime approvedAt;
+    @Column(name = "approval_decided_by", length = 128)
+    private String approvalDecidedBy;
+    @Column(name = "approval_decided_at")
+    private LocalDateTime approvalDecidedAt;
     @Column(name = "approval_reason", length = 1000)
     private String approvalReason;
     @Version
@@ -111,10 +111,10 @@ public class ActionEntity {
     public void setLeaseUntil(LocalDateTime leaseUntil) { this.leaseUntil = leaseUntil; }
     public String getApprovalStatus() { return approvalStatus; }
     public void setApprovalStatus(String approvalStatus) { this.approvalStatus = approvalStatus; }
-    public String getApprovedBy() { return approvedBy; }
-    public void setApprovedBy(String approvedBy) { this.approvedBy = approvedBy; }
-    public LocalDateTime getApprovedAt() { return approvedAt; }
-    public void setApprovedAt(LocalDateTime approvedAt) { this.approvedAt = approvedAt; }
+    public String getApprovalDecidedBy() { return approvedBy; }
+    public void setApprovalDecidedBy(String approvedBy) { this.approvedBy = approvedBy; }
+    public LocalDateTime getApprovalDecidedAt() { return approvedAt; }
+    public void setApprovalDecidedAt(LocalDateTime approvedAt) { this.approvedAt = approvedAt; }
     public String getApprovalReason() { return approvalReason; }
     public void setApprovalReason(String approvalReason) { this.approvalReason = approvalReason; }
     public long getVersion() { return version; }
