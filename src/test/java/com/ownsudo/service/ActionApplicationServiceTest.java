@@ -64,6 +64,28 @@ class ActionApplicationServiceTest {
     }
 
     @Test
+    void idempotencyKeysAreIsolatedBetweenAgents() {
+        when(repository.findByAgentIdAndIdempotencyKey("agent-a", "shared-key"))
+                .thenReturn(Optional.empty());
+        when(repository.findByAgentIdAndIdempotencyKey("agent-b", "shared-key"))
+                .thenReturn(Optional.empty());
+        when(repository.save(any(ActionEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ActionApplicationService.CreateResult first =
+                service.create("agent-a", request("shared-key", Map.of("path", "/a.txt")));
+        ActionApplicationService.CreateResult second =
+                service.create("agent-b", request("shared-key", Map.of("path", "/a.txt")));
+
+        assertTrue(first.created());
+        assertTrue(second.created());
+        assertEquals("agent-a", first.action().getAgentId());
+        assertEquals("agent-b", second.action().getAgentId());
+        assertNotEquals(first.action().getId(), second.action().getId());
+        verify(repository).findByAgentIdAndIdempotencyKey("agent-a", "shared-key");
+        verify(repository).findByAgentIdAndIdempotencyKey("agent-b", "shared-key");
+    }
+
+    @Test
     void sameIdempotencyKeyWithDifferentOperationIsConflict() {
         ActionEntity stored = new ActionEntity();
         stored.setId("act-existing");
