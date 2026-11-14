@@ -197,7 +197,7 @@ def run_agent(
         messages.append(message)
 
         if not tool_calls:
-            ownagent.create_trace_span({
+            _record_span(ownagent, {
                 "trace_id": run_id, "span_id": root_span_id, "run_id": run_id,
                 "name": "agent.run", "span_kind": "INTERNAL", "status": "OK",
                 "started_at": root_started_at.isoformat(),
@@ -282,7 +282,15 @@ def run_agent(
                 }
             )
 
-    raise RuntimeError(f"Agent exceeded the maximum of {MAX_STEPS} model steps")
+    error = RuntimeError(f"Agent exceeded the maximum of {MAX_STEPS} model steps")
+    _record_span(ownagent, {
+        "trace_id": run_id, "span_id": root_span_id, "run_id": run_id,
+        "name": "agent.run", "span_kind": "INTERNAL", "status": "ERROR",
+        "started_at": root_started_at.isoformat(),
+        "ended_at": datetime.now(timezone.utc).isoformat(),
+        "usage_source": "MISSING", "attributes": {"error_type": type(error).__name__},
+    })
+    raise error
 
 
 def main() -> None:
