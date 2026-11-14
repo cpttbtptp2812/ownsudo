@@ -54,6 +54,9 @@ public class AgentPlatformController {
     private McpToolRepository toolRepository;
 
     @Autowired
+    private com.ownsudo.security.ApprovalAuthorizationService approvalAuthorizationService;
+
+    @Autowired
     private LlmClientService llmClientService;
 
     @Autowired
