@@ -1,0 +1,45 @@
+name: Python SDK
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+    paths:
+      - "sdk/python/**"
+      - ".github/workflows/python-sdk.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "sdk/python/**"
+      - ".github/workflows/python-sdk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test Python SDK
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sdk/python/pyproject.toml
+      - name: Install package and test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check src tests examples
+      - name: Test
+        run: pytest --cov=ownagent --cov-report=term-missing --cov-fail-under=80
