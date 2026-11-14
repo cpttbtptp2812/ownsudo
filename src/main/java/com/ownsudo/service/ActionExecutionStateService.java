@@ -5,6 +5,8 @@ import com.ownsudo.entity.ActionEntity;
 import com.ownsudo.entity.ActionEventEntity;
 import com.ownsudo.repository.ActionEventRepository;
 import com.ownsudo.repository.ActionRepository;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,11 +21,14 @@ public class ActionExecutionStateService {
     private final ActionRepository actions;
     private final ActionEventRepository events;
     private final ObjectMapper mapper;
+    private final long leaseSeconds;
 
-    public ActionExecutionStateService(ActionRepository actions, ActionEventRepository events, ObjectMapper mapper) {
+    public ActionExecutionStateService(ActionRepository actions, ActionEventRepository events, ObjectMapper mapper,
+                                       @Value("${ownagent.runtime.lease-seconds:300}") long leaseSeconds) {
         this.actions = actions;
         this.events = events;
         this.mapper = mapper;
+        this.leaseSeconds = Math.max(30, leaseSeconds);
     }
 
     @Transactional
@@ -33,42 +38,75 @@ public class ActionExecutionStateService {
         if (!"ALLOW".equals(action.getDecision()) || !"READY".equals(action.getStatus())) {
             throw new ActionStateConflictException("Only Actions with decision ALLOW and status READY can be executed");
         }
+        LocalDateTime now = LocalDateTime.now();
         action.setStatus("RUNNING");
         action.setAttemptCount(action.getAttemptCount() + 1);
-        action.setStartedAt(LocalDateTime.now());
+        action.setStartedAt(now);
         action.setCompletedAt(null);
         action.setErrorCode(null);
         action.setErrorMessage(null);
+        action.setLeaseToken(UUID.randomUUID().toString());
+        action.setLeaseUntil(now.plusSeconds(leaseSeconds));
         ActionEntity saved = actions.saveAndFlush(action);
-        appendEvent(agentId, actionId, "ACTION_STARTED", Map.of("attempt", saved.getAttemptCount()));
+        appendEvent(agentId, actionId, "ACTION_STARTED", Map.of(
+                "attempt", saved.getAttemptCount(), "leaseUntil", saved.getLeaseUntil().toString()));
         return saved;
     }
 
     @Transactional
-    public ActionEntity succeed(String agentId, String actionId, Map<String, Object> output) {
-        ActionEntity action = requireRunning(agentId, actionId);
+    public ActionEntity succeed(String agentId, String actionId, String leaseToken, Map<String, Object> output) {
+        ActionEntity action = requireActiveLease(agentId, actionId, leaseToken);
         action.setStatus("SUCCEEDED");
         action.setOutputJson(writeJson(output));
         action.setErrorCode(null);
         action.setErrorMessage(null);
         action.setCompletedAt(LocalDateTime.now());
+        clearLease(action);
         ActionEntity saved = actions.saveAndFlush(action);
         appendEvent(agentId, actionId, "ACTION_SUCCEEDED", Map.of("attempt", saved.getAttemptCount()));
         return saved;
     }
 
     @Transactional
-    public ActionEntity fail(String agentId, String actionId, String errorCode, String message) {
-        ActionEntity action = requireRunning(agentId, actionId);
+    public ActionEntity fail(String agentId, String actionId, String leaseToken, String errorCode, String message) {
+        ActionEntity action = requireActiveLease(agentId, actionId, leaseToken);
         action.setStatus("FAILED");
         action.setOutputJson(null);
         action.setErrorCode(errorCode);
         action.setErrorMessage(message == null ? "Action execution failed" : message.substring(0, Math.min(message.length(), 1000)));
         action.setCompletedAt(LocalDateTime.now());
+        clearLease(action);
         ActionEntity saved = actions.saveAndFlush(action);
         appendEvent(agentId, actionId, "ACTION_FAILED", Map.of(
                 "attempt", saved.getAttemptCount(), "errorCode", errorCode));
         return saved;
+    }
+
+    /**
+     * A lease expiry means the process may have died before or after an external side effect.
+     * Mark UNKNOWN and never put the Action back into READY automatically.
+     */
+    @Transactional
+    public int recoverExpiredLeases() {
+        LocalDateTime now = LocalDateTime.now();
+        List<ActionEntity> expired = actions.findAllByStatusAndLeaseUntilBefore(
+                "RUNNING", now, PageRequest.of(0, 100));
+        int recovered = 0;
+        for (ActionEntity action : expired) {
+            if (!"RUNNING".equals(action.getStatus()) || action.getLeaseUntil() == null
+                    || action.getLeaseUntil().isAfter(now)) continue;
+            action.setStatus("UNKNOWN");
+            action.setErrorCode("EXECUTION_LEASE_EXPIRED");
+            action.setErrorMessage("The execution lease expired. The external side-effect outcome is unknown; manual reconciliation is required before retry.");
+            action.setCompletedAt(now);
+            clearLease(action);
+            ActionEntity saved = actions.saveAndFlush(action);
+            appendEvent(saved.getAgentId(), saved.getId(), "ACTION_LEASE_EXPIRED", Map.of(
+                    "attempt", saved.getAttemptCount(),
+                    "recovery", "UNKNOWN_REQUIRES_RECONCILIATION"));
+            recovered++;
+        }
+        return recovered;
     }
 
     @Transactional(readOnly = true)
@@ -81,13 +119,19 @@ public class ActionExecutionStateService {
         return events.findAllByAgentIdAndActionIdOrderByCreatedAtAsc(agentId, actionId);
     }
 
-    private ActionEntity requireRunning(String agentId, String actionId) {
+    private ActionEntity requireActiveLease(String agentId, String actionId, String leaseToken) {
         ActionEntity action = actions.findByIdAndAgentId(actionId, agentId)
                 .orElseThrow(() -> new ActionNotFoundException("Action was not found"));
-        if (!"RUNNING".equals(action.getStatus())) {
-            throw new ActionStateConflictException("Action is no longer in RUNNING state");
+        if (!"RUNNING".equals(action.getStatus()) || leaseToken == null
+                || !leaseToken.equals(action.getLeaseToken())) {
+            throw new ActionStateConflictException("Action execution lease is no longer active");
         }
         return action;
+    }
+
+    private void clearLease(ActionEntity action) {
+        action.setLeaseToken(null);
+        action.setLeaseUntil(null);
     }
 
     private void appendEvent(String agentId, String actionId, String type, Map<String, Object> details) {
