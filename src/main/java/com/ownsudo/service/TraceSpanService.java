@@ -65,7 +65,17 @@ public class TraceSpanService {
         var existing = repository.findByAgentIdAndTraceIdAndSpanId(agentId, traceId, spanId);
         if (existing.isPresent()) {
             TraceSpanEntity old = existing.get();
-            if (!old.getName().equals(name) || !old.getStartedAt().equals(LocalDateTime.ofInstant(start, ZoneOffset.UTC)))
+            if (!old.getName().equals(name)
+                    || !java.util.Objects.equals(old.getParentSpanId(), parent)
+                    || !java.util.Objects.equals(old.getRunId(), runId)
+                    || !old.getSpanKind().equals(kind) || !old.getStatus().equals(status)
+                    || !old.getStartedAt().equals(LocalDateTime.ofInstant(start, ZoneOffset.UTC))
+                    || !java.util.Objects.equals(old.getEndedAt(), end == null ? null : LocalDateTime.ofInstant(end, ZoneOffset.UTC))
+                    || !java.util.Objects.equals(old.getInputTokens(), input)
+                    || !java.util.Objects.equals(old.getOutputTokens(), output)
+                    || !java.util.Objects.equals(old.getTotalTokens(), total)
+                    || !old.getUsageSource().equals(usageSource)
+                    || !java.util.Objects.equals(old.getAttributesJson(), attributesJson))
                 throw new SpanConflictException("spanId already exists in this trace with different content");
             return old;
         }
