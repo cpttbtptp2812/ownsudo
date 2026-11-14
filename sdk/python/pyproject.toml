@@ -24,4 +24,6 @@ addopts = "-q"
 
 [tool.ruff]
 line-length = 100
+# Keep Python 3.10 support without adding typing_extensions solely for Self.
+ignore = ["PYI034"]
 target-version = "py310"
