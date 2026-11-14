@@ -1,49 +1,141 @@
-﻿# OwnSudo Engine (企业级 AI Agent 编排与零信任 2PC 执行中枢)
+# OwnAgent — AI Agent Engineering Platform
 
-本项目为独立后端工程（位于 `e:\owner\ownsudo`），与前端渲染工程（位于 `e:\owner\builder`）完全解耦，提供高可用、强一致性的 Agent DAG 工作流状态机引擎。
+**Build, run, observe, and evaluate AI Agents.**
 
-## 核心架构设计
+OwnAgent is an open-source engineering platform for the parts of Agent development that are difficult to trust in production: durable execution, tool governance, human approval, observability, and repeatable evaluation.
 
-1. **运行时环境**:
-   - Java 21 (LTS) 虚拟线程就绪
-   - Spring Boot 3.2.5
-   - Spring Data JPA + Hibernate 6.x
-   - MySQL 8.0 关系型数据库持久化 (运行于腾讯云独立实例 `43.142.74.224:3306`)
+It is not another chat wrapper and does not aim to replace every Agent framework. OwnAgent provides a focused execution and engineering layer, with REST and a planned Python SDK for integrating externally built Agents.
 
-2. **核心业务能力**:
-   - **DAG 拓扑执行器**: 解析工作流节点拓扑，按依赖顺序异步驱动多阶段推理与工具执行。
-   - **零信任人在回路 2PC 双签门禁 (Two-Phase Commit Gate)**:
-     - 在高危资金划转或生产数据库 DDL/DML 变更节点自动挂起状态机 (`SUSPENDED_APPROVAL`)。
-     - 生成审计工单 (`ApprovalTicket`)，要求合规工程师数字签名审批。
-     - 审批决策完成后计算不可篡改的 SHA-256 审计指纹，解挂并推进下游执行。
-   - **实时全双工事件流 (SSE, Server-Sent Events)**:
-     - 采用 `SseEmitter` 实现流式节点状态广播 (`INSTANCE_STARTED`, `NODE_RUNNING`, `NODE_COMPLETED`, `TICKET_REQUIRED`, `INSTANCE_COMPLETED`)。
-     - 前端 React Flow 画布毫秒级同步变色与高亮。
-   - **MCP 工具协议与数据库适配**:
-     - 封装 Model Context Protocol (MCP) 标准调用规范，直连数据库执行受控 SQL 迁移。
+## What it does
 
-## REST API 核心接口清单
+- **Run Actions:** submit tool operations through an Agent-scoped API and persist their lifecycle.
+- **Govern tools:** register tool metadata, validate input contracts, and evaluate risk policy before execution.
+- **Control execution:** only policy-approved Actions can be claimed by the Runtime.
+- **Inspect outcomes:** persist outputs, failures, attempt counts, timestamps, and lifecycle events.
+- **Integrate Agents:** use REST today; a typed Python SDK and framework adapters are on the roadmap.
 
-| 接口路径 | 请求方法 | 描述 |
-| :--- | :--- | :--- |
-| `/api/health` | GET | 引擎与云端 MySQL 存活探针 |
-| `/api/workflow/definitions` | GET | 获取全部预设企业工作流 DAG 模板 |
-| `/api/workflow/run` | POST | 触发新工作流实例运行，返回 `instanceId` |
-| `/api/workflow/instances` | GET | 获取最近执行历史列表 |
-| `/api/workflow/instances/{id}` | GET | 查询指定实例详情及所有节点执行明细 |
-| `/api/workflow/instances/{id}/stream` | GET | 建立 SSE 实时事件流订阅 |
-| `/api/workflow/approvals/pending` | GET | 查询当前待审批的 2PC 门禁工单 |
-| `/api/workflow/approvals/{ticketId}/commit` | POST | 提交 2PC 双签决策 (APPROVED / REJECTED) |
+## Architecture
 
-## 本地编译与启动
+| Component | Responsibility | Technology |
+| --- | --- | --- |
+| Platform API | Agent identity, Actions, tools, policy and trace endpoints | Java 21, Spring Boot 3 |
+| Runtime | Action lifecycle and allowlisted server-side handlers | Spring services |
+| Persistence | Agent, Action, Tool and event state | Spring Data JPA, Flyway, MySQL |
+| Studio | Agent management, Action Runs and Trace explorer | React 19, TypeScript, Vite (separate builder repository) |
+| SDK | External Agent integration | Python (planned, separate repository) |
 
-```bash
-# 设置 Java 21 环境变量
-$env:JAVA_HOME = "C:\Program Files\Java\jdk-21"
+See the architecture and roadmap in docs/architecture/ownagent-engineering-platform.md.
 
-# 编译打包
-mvn clean package -DskipTests
+## Current runtime slice
 
-# 启动服务 (默认监听 8080 端口)
-java -jar target/ownsudo-engine-1.0.0.jar
-```
+The current feature branch implements the following Action lifecycle:
+
+~~~text
+POST /api/v1/actions
+  ├── DENY             -> DENIED
+  ├── REQUIRE_APPROVAL -> PENDING_APPROVAL
+  └── ALLOW            -> READY
+                           |
+                           | POST /api/v1/actions/{id}/execute
+                           v
+                         RUNNING
+                         /     \\
+                   SUCCEEDED   FAILED
+~~~
+
+The runtime includes two deterministic demonstration handlers:
+
+- demo.echo — returns the supplied message and character count.
+- text.transform — uppercases, lowercases, trims, or reverses text.
+
+These handlers demonstrate policy-gated execution and persisted outcomes. Tool Registry metadata does **not** execute arbitrary code. No arbitrary shell, SQL, HTTP, or filesystem execution is enabled.
+
+## Quick API walkthrough
+
+All /api/v1/** requests require an Agent API key:
+
+~~~bash
+export OWNAGENT_AGENT_KEY="your-agent-api-key"
+export OWNAGENT_BASE_URL="http://localhost:8080"
+
+# 1. Register the demo handler's public input contract.
+# Requires both Agent authentication and the separate developer Tool Admin key.
+curl -X POST "$OWNAGENT_BASE_URL/api/v1/tools" \\
+  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY" \\
+  -H "X-OwnAgent-Tool-Admin-Key: $OWNAGENT_TOOL_ADMIN_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "toolName": "demo.echo",
+    "description": "Echo a message",
+    "riskLevel": "LOW",
+    "enabled": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": { "message": { "type": "string" } },
+      "required": ["message"],
+      "additionalProperties": false
+    }
+  }'
+
+# 2. Create an Action. The response is READY, not yet executed.
+curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions" \\
+  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "toolName": "demo.echo",
+    "arguments": { "message": "Hello OwnAgent" },
+    "idempotencyKey": "demo-echo-001"
+  }'
+
+# 3. Execute the returned Action ID.
+curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions/<ACTION_ID>/execute" \\
+  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY"
+
+# 4. Inspect its persisted lifecycle events.
+curl "$OWNAGENT_BASE_URL/api/v1/actions/<ACTION_ID>/events" \\
+  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY"
+~~~
+
+## Local development
+
+Requirements:
+
+- Java 21
+- Maven 3.9+
+- MySQL 8 (or a configured supported development database)
+
+Configure the required environment variables before starting the service. Production configuration intentionally does not contain default database credentials.
+
+~~~bash
+mvn clean verify
+mvn spring-boot:run
+~~~
+
+The exact database and bootstrap settings are documented in the application configuration and deployment files. Never commit real API keys or database credentials.
+
+## Roadmap
+
+| Phase | Focus | Planned outcome |
+| --- | --- | --- |
+| P0 | Runtime foundation | Durable Action state machine, handler registry, policy-gated execution, event trace |
+| P1 | Runtime reliability | Worker leases, cancellation, timeout enforcement, stale-run recovery and safe retry semantics |
+| P2 | Observability | Nested spans, LLM/tool call metadata, latency/token metrics, redaction and trace visualization |
+| P3 | Evaluation | Versioned datasets, evaluators, experiment runs, baseline comparison and regression gates |
+| P4 | Python SDK | Typed client, idempotency helpers, wait/poll and external Agent adapters |
+| P5 | Studio | Agent registry, run explorer, trace waterfall and Evaluation workbench |
+
+## Honest implementation boundaries
+
+- Approval-required Actions are persisted as PENDING_APPROVAL; the approval-to-execution transition is not complete yet.
+- The current execute endpoint is synchronous. It is not a distributed worker scheduler.
+- Timeout enforcement, cancellation, stale-run recovery and safe retries are not complete.
+- Current trace events cover Action lifecycle transitions, not nested LLM spans.
+- Evaluation and Python SDK are roadmap items, not shipped capabilities.
+- Risk levels are developer-configured and do not constitute a complete authorization language or RBAC model.
+
+## Repositories
+
+- Backend: https://github.com/cpttbtptp2812/ownsudo
+- Frontend Studio: https://github.com/cpttbtptp2812/builder
+
+Contributions and engineering feedback are welcome.
