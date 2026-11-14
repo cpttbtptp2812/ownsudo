@@ -5,11 +5,13 @@ import com.ownsudo.entity.ActionEntity;
 import com.ownsudo.repository.ActionEventRepository;
 import com.ownsudo.repository.ActionRepository;
 import org.junit.jupiter.api.Test;
+
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class ActionExecutionStateServiceTest {
@@ -33,6 +35,51 @@ class ActionExecutionStateServiceTest {
         assertTrue(claimed.getLeaseUntil().isAfter(LocalDateTime.now()));
         verify(events).save(argThat(event -> "ACTION_STARTED".equals(event.getEventType())
                 && "act-1".equals(event.getActionId())));
+    }
+
+    @Test
+    void heartbeatRenewsOnlyTheCurrentUnexpiredLease() {
+        ActionEntity running = action("ALLOW", "RUNNING");
+        running.setLeaseToken("lease-1");
+        running.setLeaseUntil(LocalDateTime.now().plusSeconds(60));
+        LocalDateTime previousExpiry = running.getLeaseUntil();
+        when(actions.findByIdAndAgentId("act-1", "agent-a")).thenReturn(Optional.of(running));
+        when(actions.saveAndFlush(running)).thenReturn(running);
+
+        ActionEntity renewed = service.renewLease("agent-a", "act-1", "lease-1");
+
+        assertTrue(renewed.getLeaseUntil().isAfter(previousExpiry));
+        verify(events, never()).save(any());
+    }
+
+    @Test
+    void heartbeatCannotResurrectAnExpiredLease() {
+        ActionEntity expired = action("ALLOW", "RUNNING");
+        expired.setLeaseToken("lease-1");
+        expired.setLeaseUntil(LocalDateTime.now().minusSeconds(1));
+        when(actions.findByIdAndAgentId("act-1", "agent-a")).thenReturn(Optional.of(expired));
+
+        assertThrows(ActionExecutionStateService.ActionStateConflictException.class,
+                () -> service.renewLease("agent-a", "act-1", "lease-1"));
+        verify(actions, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void timeoutMarksUnknownAndInvalidatesTheLeaseToken() {
+        ActionEntity running = action("ALLOW", "RUNNING");
+        running.setLeaseToken("lease-1");
+        running.setLeaseUntil(LocalDateTime.now().plusSeconds(60));
+        when(actions.findByIdAndAgentId("act-1", "agent-a")).thenReturn(Optional.of(running));
+        when(actions.saveAndFlush(running)).thenReturn(running);
+
+        ActionEntity unknown = service.markUnknown("agent-a", "act-1", "lease-1",
+                "EXECUTION_TIMEOUT", "Timed out");
+
+        assertEquals("UNKNOWN", unknown.getStatus());
+        assertEquals("EXECUTION_TIMEOUT", unknown.getErrorCode());
+        assertNull(unknown.getLeaseToken());
+        assertNull(unknown.getLeaseUntil());
+        verify(events).save(argThat(event -> "ACTION_EXECUTION_UNKNOWN".equals(event.getEventType())));
     }
 
     @Test
