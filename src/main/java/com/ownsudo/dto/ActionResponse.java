@@ -21,7 +21,11 @@ public record ActionResponse(
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         LocalDateTime startedAt,
-        LocalDateTime completedAt) {
+        LocalDateTime completedAt,
+        String approvalStatus,
+        String approvedBy,
+        LocalDateTime approvedAt,
+        String approvalReason) {
 
     public static ActionResponse from(ActionEntity action, ObjectMapper mapper) {
         try {
@@ -31,7 +35,8 @@ public record ActionResponse(
             return new ActionResponse(action.getId(), action.getAgentId(), action.getToolName(),
                     action.getStatus(), action.getDecision(), action.getRiskLevel(), arguments, metadata,
                     output, action.getErrorCode(), action.getErrorMessage(), action.getAttemptCount(),
-                    action.getCreatedAt(), action.getUpdatedAt(), action.getStartedAt(), action.getCompletedAt());
+                    action.getCreatedAt(), action.getUpdatedAt(), action.getStartedAt(), action.getCompletedAt(),
+                    action.getApprovalStatus(), action.getApprovedBy(), action.getApprovedAt(), action.getApprovalReason());
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             throw new IllegalStateException("Persisted Action JSON is invalid", e);
         }
