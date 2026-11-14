@@ -84,6 +84,15 @@ def search_workspace(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+def _record_span(ownagent: OwnAgentClient, span: dict[str, Any]) -> None:
+    """Best-effort telemetry; trace ingestion failures must not hide Agent results."""
+    try:
+        ownagent.create_trace_span(span)
+    except Exception as exc:  # noqa: BLE001
+        import sys
+        print(f"Warning: trace span was not persisted: {exc}", file=sys.stderr)
+
 def run_agent(
     llm: httpx.Client,
     ownagent: OwnAgentClient,
@@ -121,17 +130,36 @@ def run_agent(
     root_span_id = uuid.uuid4().hex
     for step in range(1, MAX_STEPS + 1):
         llm_started_at = datetime.now(timezone.utc)
-        response = llm.post(
-            "chat/completions",
-            json={
-                "model": os.environ["OPENAI_MODEL"],
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto",
-                "temperature": 0.2,
-            },
-        )
-        response.raise_for_status()
+        try:
+            response = llm.post(
+                "chat/completions",
+                json={
+                    "model": os.environ["OPENAI_MODEL"],
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "auto",
+                    "temperature": 0.2,
+                },
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            llm_ended_at = datetime.now(timezone.utc)
+            _record_span(ownagent, {
+                "trace_id": run_id, "span_id": uuid.uuid4().hex,
+                "parent_span_id": root_span_id, "run_id": run_id,
+                "name": "chat.completions", "span_kind": "CLIENT", "status": "ERROR",
+                "started_at": llm_started_at.isoformat(), "ended_at": llm_ended_at.isoformat(),
+                "usage_source": "MISSING",
+                "attributes": {"provider": "openai-compatible", "error_type": type(exc).__name__,
+                               "error_message": str(exc)[:500]},
+            })
+            _record_span(ownagent, {
+                "trace_id": run_id, "span_id": root_span_id, "run_id": run_id,
+                "name": "agent.run", "span_kind": "INTERNAL", "status": "ERROR",
+                "started_at": root_started_at.isoformat(), "ended_at": llm_ended_at.isoformat(),
+                "usage_source": "MISSING", "attributes": {"error_type": type(exc).__name__},
+            })
+            raise
         llm_ended_at = datetime.now(timezone.utc)
         payload = response.json()
         choices = payload.get("choices") or []
@@ -146,7 +174,7 @@ def run_agent(
                 f"LLM step {step}: input={usage.get('prompt_tokens', 'n/a')} "
                 f"output={usage.get('completion_tokens', 'n/a')} tokens"
             )
-        ownagent.create_trace_span({
+        _record_span(ownagent, {
             "trace_id": run_id,
             "span_id": uuid.uuid4().hex,
             "parent_span_id": root_span_id,
@@ -169,7 +197,7 @@ def run_agent(
         messages.append(message)
 
         if not tool_calls:
-            ownagent.create_trace_span({
+            _record_span(ownagent, {
                 "trace_id": run_id, "span_id": root_span_id, "run_id": run_id,
                 "name": "agent.run", "span_kind": "INTERNAL", "status": "OK",
                 "started_at": root_started_at.isoformat(),
@@ -194,33 +222,43 @@ def run_agent(
                 raise TypeError("Tool arguments must be a JSON object")
 
             action_started_at = datetime.now(timezone.utc)
-            action = ownagent.create_action(
-                tool_name,
-                arguments,
-                idempotency_key=f"{run_id}-{step}-{call_id}"[:128],
-                metadata={
-                    "runId": run_id,
-                    "toolCallId": call_id,
-                    "step": step,
-                    "agentFramework": "ownagent-python-demo",
-                },
-            )
-            if action.decision != "ALLOW" or action.status != "READY":
-                raise RuntimeError(
-                    f"Action was not immediately executable: "
-                    f"decision={action.decision}, status={action.status}"
+            action = None
+            try:
+                action = ownagent.create_action(
+                    tool_name, arguments,
+                    idempotency_key=f"{run_id}-{step}-{call_id}"[:128],
+                    metadata={"runId": run_id, "toolCallId": call_id, "step": step,
+                              "agentFramework": "ownagent-python-demo"},
                 )
-
-            result = ownagent.wait_for_terminal(
-                action.action_id,
-                timeout=60,
-                poll_interval=0.25,
-            )
-            if result.status != "SUCCEEDED":
-                raise RuntimeError(
-                    f"Action {result.action_id} ended as {result.status}: "
-                    f"{result.error_code or ''} {result.error_message or ''}"
-                )
+                if action.decision != "ALLOW" or action.status != "READY":
+                    raise RuntimeError(
+                        f"Action was not immediately executable: decision={action.decision}, status={action.status}"
+                    )
+                result = ownagent.wait_for_terminal(action.action_id, timeout=60, poll_interval=0.25)
+                if result.status != "SUCCEEDED":
+                    raise RuntimeError(
+                        f"Action {result.action_id} ended as {result.status}: {result.error_code or ''} {result.error_message or ''}"
+                    )
+            except Exception as exc:
+                _record_span(ownagent, {
+                    "trace_id": run_id, "span_id": uuid.uuid4().hex,
+                    "parent_span_id": root_span_id, "run_id": run_id,
+                    "name": "action.execute", "span_kind": "INTERNAL", "status": "ERROR",
+                    "started_at": action_started_at.isoformat(),
+                    "ended_at": datetime.now(timezone.utc).isoformat(),
+                    "usage_source": "MISSING",
+                    "attributes": {"action_id": getattr(action, "action_id", None),
+                                   "tool_name": tool_name, "error_type": type(exc).__name__,
+                                   "error_message": str(exc)[:500]},
+                })
+                _record_span(ownagent, {
+                    "trace_id": run_id, "span_id": root_span_id, "run_id": run_id,
+                    "name": "agent.run", "span_kind": "INTERNAL", "status": "ERROR",
+                    "started_at": root_started_at.isoformat(),
+                    "ended_at": datetime.now(timezone.utc).isoformat(),
+                    "usage_source": "MISSING", "attributes": {"error_type": type(exc).__name__},
+                })
+                raise
 
             action_ended_at = datetime.now(timezone.utc)
             ownagent.create_trace_span({
@@ -244,7 +282,15 @@ def run_agent(
                 }
             )
 
-    raise RuntimeError(f"Agent exceeded the maximum of {MAX_STEPS} model steps")
+    error = RuntimeError(f"Agent exceeded the maximum of {MAX_STEPS} model steps")
+    _record_span(ownagent, {
+        "trace_id": run_id, "span_id": root_span_id, "run_id": run_id,
+        "name": "agent.run", "span_kind": "INTERNAL", "status": "ERROR",
+        "started_at": root_started_at.isoformat(),
+        "ended_at": datetime.now(timezone.utc).isoformat(),
+        "usage_source": "MISSING", "attributes": {"error_type": type(error).__name__},
+    })
+    raise error
 
 
 def main() -> None:
