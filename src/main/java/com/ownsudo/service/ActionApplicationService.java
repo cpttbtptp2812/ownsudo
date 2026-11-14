@@ -47,47 +47,43 @@ public class ActionApplicationService {
             throw new IllegalArgumentException("arguments is required and must be a JSON object");
         }
 
-        try {
-            JsonNode arguments = sortJson(objectMapper.valueToTree(request.getArguments()));
-            JsonNode operation = objectMapper.createObjectNode()
-                    .put("toolName", toolName)
-                    .set("arguments", arguments);
-            String canonicalArguments = objectMapper.writeValueAsString(arguments);
-            String requestHash = sha256(objectMapper.writeValueAsString(operation));
+        JsonNode arguments = sortJson(objectMapper.valueToTree(request.getArguments()));
+        ObjectNode operation = objectMapper.createObjectNode();
+        operation.put("toolName", toolName);
+        operation.set("arguments", arguments);
 
-            Optional<ActionEntity> existing = actionRepository
-                    .findByAgentIdAndIdempotencyKey(authenticatedAgentId, idempotencyKey);
-            if (existing.isPresent()) {
-                ActionEntity previous = existing.get();
-                if (!MessageDigest.isEqual(
-                        previous.getRequestHash().getBytes(StandardCharsets.US_ASCII),
-                        requestHash.getBytes(StandardCharsets.US_ASCII))) {
-                    throw new IdempotencyConflictException(
-                            "This idempotencyKey has already been used with a different toolName or arguments");
-                }
-                return new CreateResult(previous, false);
+        String canonicalArguments = writeJson(arguments);
+        String requestHash = sha256(writeJson(operation));
+        String metadataJson = request.getMetadata() == null
+                ? null
+                : writeJson(sortJson(objectMapper.valueToTree(request.getMetadata())));
+
+        Optional<ActionEntity> existing = actionRepository
+                .findByAgentIdAndIdempotencyKey(authenticatedAgentId, idempotencyKey);
+        if (existing.isPresent()) {
+            ActionEntity previous = existing.get();
+            if (!MessageDigest.isEqual(
+                    previous.getRequestHash().getBytes(StandardCharsets.US_ASCII),
+                    requestHash.getBytes(StandardCharsets.US_ASCII))) {
+                throw new IdempotencyConflictException(
+                        "This idempotencyKey has already been used with a different toolName or arguments");
             }
-
-            ActionEntity action = new ActionEntity();
-            action.setId("act-" + UUID.randomUUID());
-            action.setAgentId(authenticatedAgentId);
-            action.setToolName(toolName);
-            action.setArgumentsJson(canonicalArguments);
-            action.setMetadataJson(request.getMetadata() == null
-                    ? null
-                    : objectMapper.writeValueAsString(sortJson(objectMapper.valueToTree(request.getMetadata()))));
-            action.setIdempotencyKey(idempotencyKey);
-            action.setRequestHash(requestHash);
-            // Deliberately does not execute a tool. Policy evaluation and runtime are separate lifecycle stages.
-            action.setStatus("PENDING_POLICY");
-            action.setDecision("UNDECIDED");
-            action.setRiskLevel("UNASSESSED");
-            return new CreateResult(actionRepository.save(action), true);
-        } catch (IdempotencyConflictException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Action request contains data that cannot be serialized as JSON", e);
+            return new CreateResult(previous, false);
         }
+
+        ActionEntity action = new ActionEntity();
+        action.setId("act-" + UUID.randomUUID());
+        action.setAgentId(authenticatedAgentId);
+        action.setToolName(toolName);
+        action.setArgumentsJson(canonicalArguments);
+        action.setMetadataJson(metadataJson);
+        action.setIdempotencyKey(idempotencyKey);
+        action.setRequestHash(requestHash);
+        // Deliberately does not execute a tool. Policy evaluation and runtime are separate lifecycle stages.
+        action.setStatus("PENDING_POLICY");
+        action.setDecision("UNDECIDED");
+        action.setRiskLevel("UNASSESSED");
+        return new CreateResult(actionRepository.save(action), true);
     }
 
     @Transactional(readOnly = true)
@@ -120,10 +116,22 @@ public class ActionApplicationService {
         return node;
     }
 
-    private String sha256(String value) throws NoSuchAlgorithmException {
-        byte[] digest = MessageDigest.getInstance("SHA-256")
-                .digest(value.getBytes(StandardCharsets.UTF_8));
-        return HexFormat.of().formatHex(digest);
+    private String writeJson(JsonNode node) {
+        try {
+            return objectMapper.writeValueAsString(node);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalArgumentException("Action request contains data that cannot be serialized as JSON", e);
+        }
+    }
+
+    private String sha256(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
 
     public record CreateResult(ActionEntity action, boolean created) {}
