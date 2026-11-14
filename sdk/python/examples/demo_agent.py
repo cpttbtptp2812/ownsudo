@@ -84,6 +84,15 @@ def search_workspace(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+def _record_span(ownagent: OwnAgentClient, span: dict[str, Any]) -> None:
+    """Best-effort telemetry; trace ingestion failures must not hide Agent results."""
+    try:
+        ownagent.create_trace_span(span)
+    except Exception as exc:  # noqa: BLE001
+        import sys
+        print(f"Warning: trace span was not persisted: {exc}", file=sys.stderr)
+
 def run_agent(
     llm: httpx.Client,
     ownagent: OwnAgentClient,
@@ -121,17 +130,36 @@ def run_agent(
     root_span_id = uuid.uuid4().hex
     for step in range(1, MAX_STEPS + 1):
         llm_started_at = datetime.now(timezone.utc)
-        response = llm.post(
-            "chat/completions",
-            json={
-                "model": os.environ["OPENAI_MODEL"],
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto",
-                "temperature": 0.2,
-            },
-        )
-        response.raise_for_status()
+        try:
+            response = llm.post(
+                "chat/completions",
+                json={
+                    "model": os.environ["OPENAI_MODEL"],
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "auto",
+                    "temperature": 0.2,
+                },
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            llm_ended_at = datetime.now(timezone.utc)
+            _record_span(ownagent, {
+                "trace_id": run_id, "span_id": uuid.uuid4().hex,
+                "parent_span_id": root_span_id, "run_id": run_id,
+                "name": "chat.completions", "span_kind": "CLIENT", "status": "ERROR",
+                "started_at": llm_started_at.isoformat(), "ended_at": llm_ended_at.isoformat(),
+                "usage_source": "MISSING",
+                "attributes": {"provider": "openai-compatible", "error_type": type(exc).__name__,
+                               "error_message": str(exc)[:500]},
+            })
+            _record_span(ownagent, {
+                "trace_id": run_id, "span_id": root_span_id, "run_id": run_id,
+                "name": "agent.run", "span_kind": "INTERNAL", "status": "ERROR",
+                "started_at": root_started_at.isoformat(), "ended_at": llm_ended_at.isoformat(),
+                "usage_source": "MISSING", "attributes": {"error_type": type(exc).__name__},
+            })
+            raise
         llm_ended_at = datetime.now(timezone.utc)
         payload = response.json()
         choices = payload.get("choices") or []
@@ -146,7 +174,7 @@ def run_agent(
                 f"LLM step {step}: input={usage.get('prompt_tokens', 'n/a')} "
                 f"output={usage.get('completion_tokens', 'n/a')} tokens"
             )
-        ownagent.create_trace_span({
+        _record_span(ownagent, {
             "trace_id": run_id,
             "span_id": uuid.uuid4().hex,
             "parent_span_id": root_span_id,
