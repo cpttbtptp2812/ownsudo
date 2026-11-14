@@ -9,7 +9,6 @@ Required environment:
 from __future__ import annotations
 
 import os
-import threading
 
 from ownagent import LocalWorker, OwnAgentClient
 
