@@ -1,7 +1,7 @@
 ALTER TABLE agent_action
     ADD COLUMN approval_status VARCHAR(16) NOT NULL DEFAULT 'NOT_REQUIRED',
-    ADD COLUMN approved_by VARCHAR(128) NULL,
-    ADD COLUMN approved_at DATETIME NULL,
+    ADD COLUMN approval_decided_by VARCHAR(128) NULL,
+    ADD COLUMN approval_decided_at DATETIME NULL,
     ADD COLUMN approval_reason VARCHAR(1000) NULL;
 
 UPDATE agent_action
