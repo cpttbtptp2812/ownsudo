@@ -35,6 +35,8 @@ def test_register_tool_uses_separate_developer_key() -> None:
 
 
 def test_register_tool_requires_developer_key() -> None:
-    with OwnAgentClient("http://localhost:8080", "agent-key") as client:
-        with pytest.raises(ValueError, match="tool_admin_api_key"):
-            client.register_tool("demo.tool", "Tool", {"type": "object"})
+    with (
+        OwnAgentClient("http://localhost:8080", "agent-key") as client,
+        pytest.raises(ValueError, match="tool_admin_api_key"),
+    ):
+        client.register_tool("demo.tool", "Tool", {"type": "object"})
