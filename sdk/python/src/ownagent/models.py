@@ -25,7 +25,7 @@ class Action:
     completed_at: str | None = None
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "Action":
+    def from_dict(cls, value: dict[str, Any]) -> Action:
         return cls(
             action_id=value["actionId"],
             agent_id=value["agentId"],
@@ -55,7 +55,7 @@ class ActionEvent:
     created_at: str | None = None
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "ActionEvent":
+    def from_dict(cls, value: dict[str, Any]) -> ActionEvent:
         return cls(
             event_id=value["eventId"],
             action_id=value["actionId"],
