@@ -53,6 +53,16 @@ public class ActionExecutionStateService {
         return saved;
     }
 
+    /**
+     * Extends only the currently active lease. An expired lease is never resurrected.
+     */
+    @Transactional
+    public ActionEntity renewLease(String agentId, String actionId, String leaseToken) {
+        ActionEntity action = requireActiveLease(agentId, actionId, leaseToken);
+        action.setLeaseUntil(LocalDateTime.now().plusSeconds(leaseSeconds));
+        return actions.saveAndFlush(action);
+    }
+
     @Transactional
     public ActionEntity succeed(String agentId, String actionId, String leaseToken, Map<String, Object> output) {
         ActionEntity action = requireActiveLease(agentId, actionId, leaseToken);
@@ -78,6 +88,29 @@ public class ActionExecutionStateService {
         clearLease(action);
         ActionEntity saved = actions.saveAndFlush(action);
         appendEvent(agentId, actionId, "ACTION_FAILED", Map.of(
+                "attempt", saved.getAttemptCount(), "errorCode", errorCode));
+        return saved;
+    }
+
+    /**
+     * A timeout/interruption has an uncertain side-effect outcome. The matching execution
+     * may mark UNKNOWN even if its lease deadline has just elapsed, but it cannot mark success.
+     */
+    @Transactional
+    public ActionEntity markUnknown(String agentId, String actionId, String leaseToken, String errorCode, String message) {
+        ActionEntity action = actions.findByIdAndAgentId(actionId, agentId)
+                .orElseThrow(() -> new ActionNotFoundException("Action was not found"));
+        if (!"RUNNING".equals(action.getStatus()) || leaseToken == null
+                || !leaseToken.equals(action.getLeaseToken())) {
+            throw new ActionStateConflictException("Action execution lease is no longer owned by this executor");
+        }
+        action.setStatus("UNKNOWN");
+        action.setErrorCode(errorCode);
+        action.setErrorMessage(message == null ? "Action outcome is unknown" : message.substring(0, Math.min(message.length(), 1000)));
+        action.setCompletedAt(LocalDateTime.now());
+        clearLease(action);
+        ActionEntity saved = actions.saveAndFlush(action);
+        appendEvent(agentId, actionId, "ACTION_EXECUTION_UNKNOWN", Map.of(
                 "attempt", saved.getAttemptCount(), "errorCode", errorCode));
         return saved;
     }
