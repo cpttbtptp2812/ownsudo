@@ -117,6 +117,22 @@ class ActionExecutionStateServiceTest {
     }
 
     @Test
+    void workerCanClaimAnApprovedHighRiskAction() {
+        ActionEntity action = action("REQUIRE_APPROVAL", "READY");
+        action.setToolName("demo.sensitive");
+        action.setApprovalStatus("APPROVED");
+        when(actions.findEligibleForWorker(eq("agent-a"), eq(List.of("demo.sensitive")), any()))
+                .thenReturn(List.of(action));
+        when(actions.saveAndFlush(action)).thenReturn(action);
+
+        Optional<ActionEntity> claimed = service.claimNext("agent-a", List.of("demo.sensitive"));
+
+        assertTrue(claimed.isPresent());
+        assertEquals("RUNNING", claimed.get().getStatus());
+        assertEquals("APPROVED", claimed.get().getApprovalStatus());
+    }
+
+    @Test
     void workerDoesNotClaimWhenNoToolsAreInstalled() {
         assertTrue(service.claimNext("agent-a", List.of()).isEmpty());
         verifyNoInteractions(actions);
