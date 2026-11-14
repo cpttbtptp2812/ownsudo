@@ -88,9 +88,11 @@ def test_worker_claim_returns_none_when_idle_and_validates_tool_list() -> None:
 
 
 def test_client_rejects_unsafe_action_id() -> None:
-    with OwnAgentClient("http://localhost:8080", "agent-key") as client:
-        with pytest.raises(ValueError):
-            client.get_action("act/../other")
+    with (
+        OwnAgentClient("http://localhost:8080", "agent-key") as client,
+        pytest.raises(ValueError),
+    ):
+        client.get_action("act/../other")
 
 
 def test_wait_for_terminal_times_out_without_retrying_execution() -> None:
