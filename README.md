@@ -12,14 +12,16 @@ It is not another chat wrapper and does not aim to replace every Agent framework
 - **Govern tools:** register tool metadata, validate input contracts, and evaluate risk policy before execution.
 - **Control execution:** only policy-approved Actions can be claimed by the Runtime.
 - **Inspect outcomes:** persist outputs, failures, attempt counts, timestamps, and lifecycle events.
-- **Integrate Agents:** use REST today; a typed Python SDK and framework adapters are on the roadmap.
+- **Keep long actions alive:** renew active execution leases with heartbeats.
+- **Represent uncertainty honestly:** timed-out or interrupted handlers become UNKNOWN rather than falsely reported as failed or retried.
+- **Integrate Agents:** use REST today; a typed Python SDK and framework adapters are planned.
 
 ## Architecture
 
 | Component | Responsibility | Technology |
 | --- | --- | --- |
 | Platform API | Agent identity, Actions, tools, policy and trace endpoints | Java 21, Spring Boot 3 |
-| Runtime | Action lifecycle and allowlisted server-side handlers | Spring services |
+| Runtime | Action lifecycle, leases, heartbeat and allowlisted handlers | Spring services, Java virtual threads |
 | Persistence | Agent, Action, Tool and event state | Spring Data JPA, Flyway, MySQL |
 | Studio | Agent management, Action Runs and Trace explorer | React 19, TypeScript, Vite (separate builder repository) |
 | SDK | External Agent integration | Python (planned, separate repository) |
@@ -38,7 +40,7 @@ POST /api/v1/actions
                            |
                            | POST /api/v1/actions/{id}/execute
                            v
-                         RUNNING (lease)
+                         RUNNING (lease + heartbeat)
                          /     |      \\
                    SUCCEEDED FAILED  UNKNOWN
 ~~~
@@ -48,7 +50,7 @@ The runtime includes two deterministic demonstration handlers:
 - demo.echo — returns the supplied message and character count.
 - text.transform — uppercases, lowercases, trims, or reverses text.
 
-These handlers demonstrate policy-gated execution and persisted outcomes. Each RUNNING Action receives a lease; expired leases are recovered as UNKNOWN, never blindly retried. Tool Registry metadata does **not** execute arbitrary code. No arbitrary shell, SQL, HTTP, or filesystem execution is enabled.
+These handlers demonstrate policy-gated execution and persisted outcomes. Each RUNNING Action receives a lease; heartbeats extend active leases. Expired leases are recovered as UNKNOWN. Handler timeout or request interruption also becomes UNKNOWN because an interrupted Java thread cannot prove that an external side effect stopped. Tool Registry metadata does **not** execute arbitrary code. No arbitrary shell, SQL, HTTP, or filesystem execution is enabled.
 
 ## Quick API walkthrough
 
@@ -60,10 +62,10 @@ export OWNAGENT_BASE_URL="http://localhost:8080"
 
 # 1. Register the demo handler's public input contract.
 # Requires both Agent authentication and the separate developer Tool Admin key.
-curl -X POST "$OWNAGENT_BASE_URL/api/v1/tools" \\
-  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY" \\
-  -H "X-OwnAgent-Tool-Admin-Key: $OWNAGENT_TOOL_ADMIN_API_KEY" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "$OWNAGENT_BASE_URL/api/v1/tools" \
+  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY" \
+  -H "X-OwnAgent-Tool-Admin-Key: $OWNAGENT_TOOL_ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{
     "toolName": "demo.echo",
     "description": "Echo a message",
@@ -78,9 +80,9 @@ curl -X POST "$OWNAGENT_BASE_URL/api/v1/tools" \\
   }'
 
 # 2. Create an Action. The response is READY, not yet executed.
-curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions" \\
-  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions" \
+  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY" \
+  -H "Content-Type: application/json" \
   -d '{
     "toolName": "demo.echo",
     "arguments": { "message": "Hello OwnAgent" },
@@ -88,11 +90,11 @@ curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions" \\
   }'
 
 # 3. Execute the returned Action ID.
-curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions/<ACTION_ID>/execute" \\
+curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions/<ACTION_ID>/execute" \
   -H "Authorization: Bearer $OWNAGENT_AGENT_KEY"
 
 # 4. Inspect its persisted lifecycle events.
-curl "$OWNAGENT_BASE_URL/api/v1/actions/<ACTION_ID>/events" \\
+curl "$OWNAGENT_BASE_URL/api/v1/actions/<ACTION_ID>/events" \
   -H "Authorization: Bearer $OWNAGENT_AGENT_KEY"
 ~~~
 
@@ -111,25 +113,35 @@ mvn clean verify
 mvn spring-boot:run
 ~~~
 
-The exact database and bootstrap settings are documented in the application configuration and deployment files. Never commit real API keys or database credentials.
+Runtime configuration:
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| OWNAGENT_ACTION_LEASE_SECONDS | 300 | Lease duration, minimum 30 seconds |
+| OWNAGENT_ACTION_HEARTBEAT_INTERVAL_MS | 10000 | Lease renewal cadence |
+| OWNAGENT_ACTION_TIMEOUT_SECONDS | 60 | Maximum synchronous handler duration |
+| OWNAGENT_ACTION_RECOVERY_INTERVAL_MS | 30000 | Expired lease recovery scan cadence |
+
+The heartbeat interval should be comfortably shorter than the lease duration. Never commit real API keys or database credentials.
 
 ## Roadmap
 
 | Phase | Focus | Planned outcome |
 | --- | --- | --- |
 | P0 | Runtime foundation | Durable Action state machine, handler registry, policy-gated execution, event trace |
-| P1 | Runtime reliability | Worker leases, cancellation, timeout enforcement, stale-run recovery and safe retry semantics |
-| P2 | Observability | Nested spans, LLM/tool call metadata, latency/token metrics, redaction and trace visualization |
-| P3 | Evaluation | Versioned datasets, evaluators, experiment runs, baseline comparison and regression gates |
-| P4 | Python SDK | Typed client, idempotency helpers, wait/poll and external Agent adapters |
+| P1 | Developer execution | Python SDK, Local Worker, custom Python tools and approval-to-execution flow |
+| P2 | Runtime hardening | Worker leases, cancellation, manual reconciliation, safe retry semantics and outbox dispatch |
+| P3 | Observability | Nested spans, LLM/tool call metadata, latency/token metrics, redaction and trace visualization |
+| P4 | Evaluation | Versioned datasets, evaluators, experiment runs, baseline comparison and regression gates |
 | P5 | Studio | Agent registry, run explorer, trace waterfall and Evaluation workbench |
 
 ## Honest implementation boundaries
 
 - Approval-required Actions are persisted as PENDING_APPROVAL; the approval-to-execution transition is not complete yet.
-- The current execute endpoint is synchronous. It is not a distributed worker scheduler.
-- Lease expiry recovery is implemented, but lease heartbeats/renewal, handler timeout enforcement, cancellation, and a manual reconciliation UI are not complete.
-- UNKNOWN means an external side effect may have occurred; the platform does not automatically retry it.
+- The current execute endpoint is synchronous and uses server-installed handlers. It is not a distributed worker scheduler.
+- Lease heartbeats and handler timeout handling are implemented for this synchronous runtime. Java interruption is best-effort; a timed-out external side effect may still complete.
+- Expired or timed-out executions become UNKNOWN and are not automatically retried. Manual reconciliation UI is not complete.
+- Tool Registry metadata does not execute arbitrary code; only explicitly installed server-side handlers run.
 - Current trace events cover Action lifecycle transitions, not nested LLM spans.
 - Evaluation and Python SDK are roadmap items, not shipped capabilities.
 - Risk levels are developer-configured and do not constitute a complete authorization language or RBAC model.
