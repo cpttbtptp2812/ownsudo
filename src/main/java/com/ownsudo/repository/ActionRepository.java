@@ -3,6 +3,8 @@ package com.ownsudo.repository;
 import com.ownsudo.entity.ActionEntity;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import jakarta.persistence.LockModeType;
 import org.springframework.stereotype.Repository;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -14,4 +16,8 @@ public interface ActionRepository extends JpaRepository<ActionEntity, String> {
     Optional<ActionEntity> findByIdAndAgentId(String id, String agentId);
     List<ActionEntity> findAllByAgentIdOrderByCreatedAtDesc(String agentId, Pageable pageable);
     List<ActionEntity> findAllByStatusAndLeaseUntilBefore(String status, LocalDateTime cutoff, Pageable pageable);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<ActionEntity> findFirstByAgentIdAndDecisionAndStatusAndToolNameInOrderByCreatedAtAsc(
+            String agentId, String decision, String status, List<String> toolNames);
 }
