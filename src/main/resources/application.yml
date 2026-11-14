@@ -18,3 +18,7 @@ logging:
     root: INFO
     com.ownsudo: DEBUG
     org.hibernate.SQL: WARN
+app:
+  security:
+    approver-api-key: ${OWNAGENT_APPROVER_API_KEY:}
+    approver-id: ${OWNAGENT_APPROVER_ID:}
