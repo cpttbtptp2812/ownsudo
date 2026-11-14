@@ -19,12 +19,13 @@ class AgentApiKeyServiceTest {
         assertTrue(service.authenticate(null).isEmpty());
         assertTrue(service.authenticate("").isEmpty());
         assertTrue(service.authenticate("not-an-ownagent-key").isEmpty());
+        assertTrue(service.authenticate("oa_live_weak").isEmpty());
         verifyNoInteractions(repository);
     }
 
     @Test
     void resolvesOnlyActiveNonRevokedKeyToItsAgent() {
-        String token = "oa_live_test-secret";
+        String token = "oa_live_" + "a".repeat(64);
         String hash = AgentApiKeyService.hashToken(token);
         AgentApiKeyEntity entity = new AgentApiKeyEntity();
         entity.setAgentId("agent-123");
@@ -36,7 +37,7 @@ class AgentApiKeyServiceTest {
 
     @Test
     void unknownKeyDoesNotAuthenticate() {
-        String token = "oa_live_unknown";
+        String token = "oa_live_" + "b".repeat(64);
         when(repository.findByKeyHashAndActiveTrueAndRevokedAtIsNull(AgentApiKeyService.hashToken(token)))
                 .thenReturn(Optional.empty());
 
