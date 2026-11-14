@@ -110,3 +110,42 @@ def test_rejects_empty_idempotency_key() -> None:
         pytest.raises(ValueError),
     ):
         client.create_action("demo.echo", {}, idempotency_key="")
+
+
+
+def test_create_trace_span_sends_provider_usage() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST" and request.url.path == "/api/v1/traces/spans"
+        body = json.loads(request.content)
+        assert body["traceId"] == "trace-123"
+        assert body["inputTokens"] == 120 and body["outputTokens"] == 30
+        assert body["usageSource"] == "PROVIDER"
+        assert "prompt" not in body
+        return httpx.Response(202, json={"traceId": "trace-123", "spanId": "span-1"})
+    with OwnAgentClient("http://localhost:8080", "test-key",
+                        transport=httpx.MockTransport(handler)) as client:
+        result = client.create_trace_span({
+            "trace_id": "trace-123", "span_id": "span-1", "name": "llm.chat",
+            "started_at": "2026-11-14T10:00:00Z", "input_tokens": 120,
+            "output_tokens": 30, "usage_source": "PROVIDER",
+        })
+    assert result["spanId"] == "span-1"
+
+
+def test_create_trace_span_requires_identity_and_start_time() -> None:
+    with OwnAgentClient("http://localhost:8080", "test-key",
+                        transport=httpx.MockTransport(lambda _: httpx.Response(202, json={}))) as client:
+        with pytest.raises(ValueError, match="trace_id"):
+            client.create_trace_span({"span_id": "s1", "name": "llm"})
+        with pytest.raises(ValueError, match="started_at"):
+            client.create_trace_span({"trace_id": "t1", "span_id": "s1", "name": "llm"})
+
+
+def test_get_trace_spans_uses_agent_authenticated_api() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET" and request.url.path == "/api/v1/traces/trace-123/spans"
+        assert request.headers["Authorization"] == "Bearer test-key"
+        return httpx.Response(200, json=[])
+    with OwnAgentClient("http://localhost:8080", "test-key",
+                        transport=httpx.MockTransport(handler)) as client:
+        assert client.get_trace_spans("trace-123") == []
