@@ -13,6 +13,7 @@ import com.ownsudo.repository.NodeExecutionRepository;
 import com.ownsudo.repository.WorkflowInstanceRepository;
 import com.ownsudo.service.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -23,6 +24,12 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/workflow")
 public class WorkflowController {
+
+    @Autowired
+    private com.ownsudo.security.ApprovalAuthorizationService approvalAuthorizationService;
+
+    @Value("${app.security.approver-id:}")
+    private String configuredApproverId;
 
     @Autowired
     private WorkflowDefinitionService definitionService;
@@ -124,15 +131,25 @@ public class WorkflowController {
     }
 
     @GetMapping("/approvals/pending")
-    public List<ApprovalTicket> getPendingApprovals() {
-        return approvalTicketRepository.findByStatusOrderByCreatedAtDesc("PENDING");
+    public ResponseEntity<?> getPendingApprovals(
+            @RequestHeader(name = "X-OwnAgent-Approver-Key", required = false) String approverKey) {
+        if (!approvalAuthorizationService.isAuthorized(approverKey)) {
+            return ResponseEntity.status(403).body(Map.of("error", "Approver authentication required"));
+        }
+        return ResponseEntity.ok(approvalTicketRepository.findByStatusOrderByCreatedAtDesc("PENDING"));
     }
 
     @PostMapping("/approvals/{ticketId}/commit")
     public ResponseEntity<?> commitApproval(
             @PathVariable String ticketId,
+            @RequestHeader(name = "X-OwnAgent-Approver-Key", required = false) String approverKey,
             @RequestBody CommitApprovalRequest req) {
+        if (!approvalAuthorizationService.isAuthorized(approverKey)) {
+            return ResponseEntity.status(403).body(Map.of("error", "Approver authentication required"));
+        }
         try {
+            // The approver identity is server-configured; never trust an identity supplied in the request body.
+            req.setOperatorId(configuredApproverId);
             ApprovalTicket ticket = engineService.commitApproval(ticketId, req);
             return ResponseEntity.ok(ticket);
         } catch (IllegalArgumentException e) {
