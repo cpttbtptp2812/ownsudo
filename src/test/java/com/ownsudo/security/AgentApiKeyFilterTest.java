@@ -32,7 +32,7 @@ class AgentApiKeyFilterTest {
         AgentApiKeyService service = mock(AgentApiKeyService.class);
         AgentApiKeyFilter filter = new AgentApiKeyFilter(service);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/identity");
-        request.addHeader("Authorization", "Bearer oa_live_" + "a".repeat(64));
+        request.addHeader("Authorization", "bEaReR oa_live_" + "a".repeat(64));
         MockHttpServletResponse response = new MockHttpServletResponse();
         FilterChain chain = mock(FilterChain.class);
         when(service.authenticate("oa_live_" + "a".repeat(64))).thenReturn(Optional.of("agent-123"));
