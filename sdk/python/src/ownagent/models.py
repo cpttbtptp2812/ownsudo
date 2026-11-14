@@ -23,6 +23,10 @@ class Action:
     updated_at: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
+    approval_status: str | None = None
+    approval_decided_by: str | None = None
+    approval_decided_at: str | None = None
+    approval_reason: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Action:
@@ -43,6 +47,10 @@ class Action:
             updated_at=value.get("updatedAt"),
             started_at=value.get("startedAt"),
             completed_at=value.get("completedAt"),
+            approval_status=value.get("approvalStatus"),
+            approval_decided_by=value.get("approvalDecidedBy"),
+            approval_decided_at=value.get("approvalDecidedAt"),
+            approval_reason=value.get("approvalReason"),
         )
 
 
