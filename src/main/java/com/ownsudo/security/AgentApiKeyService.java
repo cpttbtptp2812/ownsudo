@@ -47,7 +47,7 @@ public class AgentApiKeyService {
         } catch (IllegalArgumentException e) {
             return Optional.empty();
         }
-        return repository.findByKeyHashAndActiveTrueAndRevokedAtIsNull(hash)
+        return repository.findUsableByKeyHash(hash)
                 .map(AgentApiKeyEntity::getAgentId);
     }
 }
