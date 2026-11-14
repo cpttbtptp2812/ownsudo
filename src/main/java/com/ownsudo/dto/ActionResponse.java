@@ -1,6 +1,9 @@
 package com.ownsudo.dto;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ownsudo.entity.ActionEntity;
+
 import java.time.LocalDateTime;
 
 public record ActionResponse(
@@ -10,22 +13,30 @@ public record ActionResponse(
         String status,
         String decision,
         String riskLevel,
-        String argumentsJson,
-        String metadataJson,
+        JsonNode arguments,
+        JsonNode metadata,
         LocalDateTime createdAt,
         LocalDateTime updatedAt) {
 
-    public static ActionResponse from(ActionEntity action) {
-        return new ActionResponse(
-                action.getId(),
-                action.getAgentId(),
-                action.getToolName(),
-                action.getStatus(),
-                action.getDecision(),
-                action.getRiskLevel(),
-                action.getArgumentsJson(),
-                action.getMetadataJson(),
-                action.getCreatedAt(),
-                action.getUpdatedAt());
+    public static ActionResponse from(ActionEntity action, ObjectMapper objectMapper) {
+        try {
+            JsonNode arguments = objectMapper.readTree(action.getArgumentsJson());
+            JsonNode metadata = action.getMetadataJson() == null
+                    ? null
+                    : objectMapper.readTree(action.getMetadataJson());
+            return new ActionResponse(
+                    action.getId(),
+                    action.getAgentId(),
+                    action.getToolName(),
+                    action.getStatus(),
+                    action.getDecision(),
+                    action.getRiskLevel(),
+                    arguments,
+                    metadata,
+                    action.getCreatedAt(),
+                    action.getUpdatedAt());
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("Persisted Action JSON is invalid", e);
+        }
     }
 }
