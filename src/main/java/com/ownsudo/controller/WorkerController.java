@@ -94,6 +94,26 @@ public class WorkerController {
         }
     }
 
+    @PostMapping("/{actionId}/unknown")
+    public ResponseEntity<?> unknown(
+            @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
+            @PathVariable String actionId,
+            @RequestBody(required = false) WorkerFailRequest request) {
+        if (request == null || request.leaseToken() == null || request.leaseToken().isBlank()
+                || request.errorCode() == null || !request.errorCode().matches("[A-Z0-9_]{1,64}")) {
+            return ResponseEntity.badRequest().body(error("INVALID_WORKER_OUTCOME",
+                    "leaseToken and an uppercase errorCode are required"));
+        }
+        try {
+            return ResponseEntity.ok(executionState.markUnknown(agentId, actionId, request.leaseToken(),
+                    request.errorCode(), request.errorMessage()));
+        } catch (ActionExecutionStateService.ActionNotFoundException e) {
+            return ResponseEntity.notFound().build();
+        } catch (ActionExecutionStateService.ActionStateConflictException e) {
+            return ResponseEntity.status(409).body(error("LEASE_NOT_ACTIVE", e.getMessage()));
+        }
+    }
+
     @PostMapping("/{actionId}/fail")
     public ResponseEntity<?> fail(
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
