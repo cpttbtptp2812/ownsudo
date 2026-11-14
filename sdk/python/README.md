@@ -42,7 +42,6 @@ with OwnAgentClient(
     os.environ["OWNAGENT_BASE_URL"],
     os.environ["OWNAGENT_AGENT_API_KEY"],
     tool_admin_api_key=os.environ["OWNAGENT_TOOL_ADMIN_API_KEY"],
-    approver_api_key=os.environ["OWNAGENT_APPROVER_API_KEY"],
 ) as client:
     client.register_tool(
         "demo.local_greeting",
@@ -74,6 +73,30 @@ action = client.create_action(
 ```
 
 The Action is eligible for the Worker when the server policy returns `ALLOW / READY`, or when an Action with `REQUIRE_APPROVAL` has been explicitly approved and returned to `READY`. The Worker claims only tool names for which the local process has registered a handler. You can run the Agent and Worker as separate processes.
+
+## Quick start: run a model-driven Agent
+
+The repository includes a complete example that runs a small model-driven Agent and delegates its tool execution to OwnAgent. The example starts a Local Worker in a background thread, so the Agent loop and Worker run as separate execution roles in one Python process.
+
+Install the SDK and configure the backend credentials above, then add:
+
+- `OPENAI_API_KEY`: API key for an OpenAI-compatible model endpoint
+- `OPENAI_MODEL`: model name with tool-calling support
+- `OPENAI_BASE_URL`: optional; defaults to `https://api.openai.com/v1`
+
+Run:
+
+```bash
+export OPENAI_API_KEY="..."
+export OPENAI_MODEL="..."
+# Optional for a compatible provider:
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+python examples/demo_agent.py
+```
+
+The example asks the model to research OwnAgent's execution semantics. The model chooses when to call `demo.search_workspace`; the example submits that call as an Action; the Local Worker executes the registered Python function; and the result is returned to the model for its final answer.
+
+The Action lifecycle and tool metadata are persisted by OwnAgent. **The model request itself currently goes directly from the example to the configured LLM endpoint; its token usage is printed from the provider response but is not yet ingested as an OwnAgent LLM trace.** Full model-call tracing is a separate observability milestone.
 
 ## SDK API
 
@@ -109,4 +132,4 @@ The Action is eligible for the Worker when the server policy returns `ALLOW / RE
 
 This package currently lives in the backend monorepo under `sdk/python` so it can evolve against the API contract. It is independently installable from source but is not yet published to PyPI.
 
-See `examples/basic_agent.py` and `examples/local_worker.py`.
+See `examples/basic_agent.py`, `examples/local_worker.py`, and `examples/demo_agent.py`.
