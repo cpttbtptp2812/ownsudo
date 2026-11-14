@@ -14,7 +14,8 @@ It is not another chat wrapper and does not aim to replace every Agent framework
 - **Inspect outcomes:** persist outputs, failures, attempt counts, timestamps, and lifecycle events.
 - **Keep long actions alive:** renew active execution leases with heartbeats.
 - **Represent uncertainty honestly:** timed-out or interrupted handlers become UNKNOWN rather than falsely reported as failed or retried.
-- **Integrate Agents:** use REST or the early-preview Python SDK under `sdk/python` today.
+- **Integrate Agents:** use REST or the early-preview Python SDK under `sdk/python`.
+- **Run local tools:** use the Local Worker preview to execute explicitly registered Python functions on your own machine.
 
 ## Architecture
 
@@ -24,7 +25,7 @@ It is not another chat wrapper and does not aim to replace every Agent framework
 | Runtime | Action lifecycle, leases, heartbeat and allowlisted handlers | Spring services, Java virtual threads |
 | Persistence | Agent, Action, Tool and event state | Spring Data JPA, Flyway, MySQL |
 | Studio | Agent management, Action Runs and Trace explorer | React 19, TypeScript, Vite (separate builder repository) |
-| SDK | External Agent integration | Python package (`sdk/python`, early developer preview) |
+| SDK / Worker | Agent integration and local Python tool execution | Python package (`sdk/python`, early developer preview) |
 
 See the architecture and roadmap in docs/architecture/ownagent-engineering-platform.md.
 
@@ -52,7 +53,28 @@ The runtime includes two deterministic demonstration handlers:
 
 These handlers demonstrate policy-gated execution and persisted outcomes. Each RUNNING Action receives a lease; heartbeats extend active leases. Expired leases are recovered as UNKNOWN. Handler timeout or request interruption also becomes UNKNOWN because an interrupted Java thread cannot prove that an external side effect stopped. Tool Registry metadata does **not** execute arbitrary code. No arbitrary shell, SQL, HTTP, or filesystem execution is enabled.
 
-## Python SDK (early developer preview)\n\nAn installable synchronous client is available in `sdk/python`. It supports Action creation, one-shot execution, status polling, and lifecycle event retrieval. It does not automatically retry execution requests. A network timeout is ambiguous and must not trigger blind retries.\n\n~~~bash\ncd sdk/python\npython -m pip install -e .\n~~~\n\n~~~python\nimport os\nfrom ownagent import OwnAgentClient\n\nwith OwnAgentClient(\"http://localhost:8080\", os.environ[\"OWNAGENT_AGENT_API_KEY\"]) as client:\n    action = client.create_action(\n        \"demo.echo\", {\"message\": \"Hello from my Agent\"},\n        idempotency_key=\"my-agent-run-001\",\n    )\n    if action.decision == \"ALLOW\" and action.status == \"READY\":\n        result = client.execute_action(action.action_id)\n        print(result.status, result.output)\n~~~\n\nSee [SDK documentation](sdk/python/README.md) and [basic example](sdk/python/examples/basic_agent.py). The package is independently installable but currently lives in this monorepo; a separate GitHub repository has not yet been created.\n\n## Quick API walkthrough
+## Python SDK and Local Worker
+
+An installable Python SDK is available under sdk/python. It supports Action creation, metadata registration, event retrieval, and a LocalWorker that executes explicitly registered Python callables on a developer-controlled machine.
+
+Install from this repository:
+
+~~~bash
+cd sdk/python
+python -m pip install -e .
+~~~
+
+Configure OWNAGENT_BASE_URL, OWNAGENT_AGENT_API_KEY, and OWNAGENT_TOOL_ADMIN_API_KEY, then run:
+
+~~~bash
+python examples/local_worker.py
+~~~
+
+The Worker claims only ALLOW / READY Actions for tool names registered in the local process. The Agent and Worker can run as separate processes. See the SDK documentation and examples/local_worker.py for the full workflow.
+
+Important boundaries: this first Worker runs in the host process and is not a sandbox. It uses the Agent API key, processes one Action at a time per process, and does not automatically retry. Handler exceptions and ambiguous completion outcomes become UNKNOWN. Approval resumption, independent Worker enrollment credentials, OS-level sandboxing, and manual reconciliation remain future work.
+
+## Quick API walkthrough
 
 All /api/v1/** requests require an Agent API key:
 
