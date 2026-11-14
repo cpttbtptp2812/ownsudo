@@ -21,7 +21,7 @@ The first integration slice protects the `/api/v1/**` namespace with per-Agent b
 4. Restart the service. The bootstrap runner verifies that the Agent exists and stores only the SHA-256 hash. It never stores the raw API key.
 5. Keep the raw key in a secret manager. Do not commit it, print it in application logs, or put it in browser-side code.
 
-The bootstrap key is associated with the fixed key name `bootstrap` for that Agent. Replacing the configured token and restarting rotates that credential. This initial bootstrap supports one Agent/key pair; a multi-key management API and revocation UI are not part of this change.
+The bootstrap key is associated with the fixed key name `bootstrap` for that Agent. Replacing the configured token and restarting rotates that credential. This initial bootstrap supports one Agent/key pair; a multi-key management API and revocation UI are not part of this change. Authentication also checks the owning Agent record and rejects keys whose Agent status is `DISABLED`, `DELETED`, `INACTIVE`, or `SUSPENDED`.
 
 ## Verify the integration
 
