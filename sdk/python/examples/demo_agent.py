@@ -17,6 +17,7 @@ import json
 import os
 import threading
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -116,7 +117,10 @@ def run_agent(
         }
     ]
 
+    root_started_at = datetime.now(timezone.utc)
+    root_span_id = uuid.uuid4().hex
     for step in range(1, MAX_STEPS + 1):
+        llm_started_at = datetime.now(timezone.utc)
         response = llm.post(
             "chat/completions",
             json={
@@ -128,6 +132,7 @@ def run_agent(
             },
         )
         response.raise_for_status()
+        llm_ended_at = datetime.now(timezone.utc)
         payload = response.json()
         choices = payload.get("choices") or []
         if not choices:
@@ -141,9 +146,37 @@ def run_agent(
                 f"LLM step {step}: input={usage.get('prompt_tokens', 'n/a')} "
                 f"output={usage.get('completion_tokens', 'n/a')} tokens"
             )
+        ownagent.create_trace_span({
+            "trace_id": run_id,
+            "span_id": uuid.uuid4().hex,
+            "parent_span_id": root_span_id,
+            "run_id": run_id,
+            "name": "chat.completions",
+            "span_kind": "CLIENT",
+            "status": "OK",
+            "started_at": llm_started_at.isoformat(),
+            "ended_at": llm_ended_at.isoformat(),
+            "input_tokens": usage.get("prompt_tokens"),
+            "output_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+            "usage_source": "PROVIDER" if usage else "MISSING",
+            "attributes": {
+                "provider": "openai-compatible",
+                "model": payload.get("model"),
+                "tool_call_count": len(tool_calls),
+            },
+        })
         messages.append(message)
 
         if not tool_calls:
+            ownagent.create_trace_span({
+                "trace_id": run_id, "span_id": root_span_id, "run_id": run_id,
+                "name": "agent.run", "span_kind": "INTERNAL", "status": "OK",
+                "started_at": root_started_at.isoformat(),
+                "ended_at": llm_ended_at.isoformat(),
+                "usage_source": "MISSING",
+                "attributes": {"framework": "ownagent-python-demo"},
+            })
             return str(message.get("content") or "")
 
         for call in tool_calls:
@@ -160,6 +193,7 @@ def run_agent(
             if not isinstance(arguments, dict):
                 raise TypeError("Tool arguments must be a JSON object")
 
+            action_started_at = datetime.now(timezone.utc)
             action = ownagent.create_action(
                 tool_name,
                 arguments,
@@ -188,6 +222,20 @@ def run_agent(
                     f"{result.error_code or ''} {result.error_message or ''}"
                 )
 
+            action_ended_at = datetime.now(timezone.utc)
+            ownagent.create_trace_span({
+                "trace_id": run_id,
+                "span_id": uuid.uuid4().hex,
+                "parent_span_id": root_span_id,
+                "run_id": run_id,
+                "name": "action.execute",
+                "span_kind": "INTERNAL",
+                "status": "OK",
+                "started_at": action_started_at.isoformat(),
+                "ended_at": action_ended_at.isoformat(),
+                "usage_source": "MISSING",
+                "attributes": {"action_id": result.action_id, "tool_name": tool_name},
+            })
             messages.append(
                 {
                     "role": "tool",
