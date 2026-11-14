@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ownsudo.dto.CreateActionRequest;
 import com.ownsudo.entity.ActionEntity;
-import com.ownsudo.repository.ActionRepository;
+import com.ownsudo.repository.ActionRepository;\nimport com.ownsudo.entity.AgentToolEntity;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,7 +21,7 @@ public class ActionApplicationService {
 
     private static final int MAX_LIMIT = 100;
     private final ActionRepository actionRepository;
-    private final ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper;\n    private final ToolRegistryService toolRegistry;\n    private final ActionPolicyEngine policyEngine;
 
     public ActionApplicationService(ActionRepository actionRepository, ObjectMapper objectMapper) {
         this.actionRepository = actionRepository;
