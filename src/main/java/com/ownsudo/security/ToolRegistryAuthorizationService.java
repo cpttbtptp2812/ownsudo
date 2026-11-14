@@ -8,7 +8,7 @@ import java.security.MessageDigest;
 @Service
 public class ToolRegistryAuthorizationService {
     private final String configuredKey;
-    public ToolRegistryAuthorizationService(@Value("\${app.security.tool-admin-api-key:}") String configuredKey) {
+    public ToolRegistryAuthorizationService(@Value("${app.security.tool-admin-api-key:}") String configuredKey) {
         this.configuredKey = configuredKey == null ? "" : configuredKey;
     }
     public boolean isAuthorized(String suppliedKey) {
