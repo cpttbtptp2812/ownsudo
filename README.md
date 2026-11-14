@@ -38,9 +38,9 @@ POST /api/v1/actions
                            |
                            | POST /api/v1/actions/{id}/execute
                            v
-                         RUNNING
-                         /     \\
-                   SUCCEEDED   FAILED
+                         RUNNING (lease)
+                         /     |      \\
+                   SUCCEEDED FAILED  UNKNOWN
 ~~~
 
 The runtime includes two deterministic demonstration handlers:
@@ -48,7 +48,7 @@ The runtime includes two deterministic demonstration handlers:
 - demo.echo — returns the supplied message and character count.
 - text.transform — uppercases, lowercases, trims, or reverses text.
 
-These handlers demonstrate policy-gated execution and persisted outcomes. Tool Registry metadata does **not** execute arbitrary code. No arbitrary shell, SQL, HTTP, or filesystem execution is enabled.
+These handlers demonstrate policy-gated execution and persisted outcomes. Each RUNNING Action receives a lease; expired leases are recovered as UNKNOWN, never blindly retried. Tool Registry metadata does **not** execute arbitrary code. No arbitrary shell, SQL, HTTP, or filesystem execution is enabled.
 
 ## Quick API walkthrough
 
@@ -128,7 +128,8 @@ The exact database and bootstrap settings are documented in the application conf
 
 - Approval-required Actions are persisted as PENDING_APPROVAL; the approval-to-execution transition is not complete yet.
 - The current execute endpoint is synchronous. It is not a distributed worker scheduler.
-- Timeout enforcement, cancellation, stale-run recovery and safe retries are not complete.
+- Lease expiry recovery is implemented, but lease heartbeats/renewal, handler timeout enforcement, cancellation, and a manual reconciliation UI are not complete.
+- UNKNOWN means an external side effect may have occurred; the platform does not automatically retry it.
 - Current trace events cover Action lifecycle transitions, not nested LLM spans.
 - Evaluation and Python SDK are roadmap items, not shipped capabilities.
 - Risk levels are developer-configured and do not constitute a complete authorization language or RBAC model.
