@@ -57,6 +57,8 @@ The current feature branch contains:
 - A server-side handler registry. Tool metadata does not make arbitrary code or an endpoint executable.
 - Two safe demonstration handlers: `demo.echo` and `text.transform`.
 - Persisted Action lifecycle fields and append-only Action event records.
+- Per-execution lease token and expiry, with lease-fenced completion to reject stale executors.
+- Scheduled stale-run recovery: expired RUNNING Actions become UNKNOWN and require reconciliation; they are never automatically requeued.
 - Agent-scoped Action detail and event APIs.
 
 The demonstration handlers are intentionally deterministic and local. They prove the runtime lifecycle without enabling arbitrary shell, SQL, network, or filesystem execution.
@@ -71,12 +73,14 @@ POST /api/v1/actions
                            |
                            | POST /api/v1/actions/{id}/execute
                            v
-                         RUNNING
-                         /     \\
-                   SUCCEEDED   FAILED
+                         RUNNING (lease)
+                         /     |      \\
+                   SUCCEEDED FAILED  UNKNOWN
 ```
 
-Only Actions with both `decision=ALLOW` and `status=READY` can be claimed. The claim and terminal state transitions are persisted in separate transactions. An optimistic version column prevents two concurrent requests from both claiming the same Action. Tool handler code runs outside the database transaction.
+Only Actions with both `decision=ALLOW` and `status=READY` can be claimed. A claim persists a random lease token and expiry; completion must present the same token before expiry. The claim and terminal state transitions are persisted in separate transactions. An optimistic version column prevents two concurrent requests from both claiming the same Action. Tool handler code runs outside the database transaction.
+
+A scheduled recovery task scans expired RUNNING leases. It marks those Actions `UNKNOWN`, records `EXECUTION_LEASE_EXPIRED`, and emits `ACTION_LEASE_EXPIRED`. It deliberately does not return them to READY: after a process crash, an external side effect may already have happened. Manual reconciliation is required before any retry. The default lease is 300 seconds and the recovery scan runs every 30 seconds; both are configurable.
 
 A handler that is not installed fails explicitly with `TOOL_HANDLER_NOT_FOUND`; it is never treated as successful merely because metadata exists.
 
@@ -94,7 +98,7 @@ All `/api/v1/**` requests require an Agent Bearer API key. Tool registration add
 
 ## Next milestones
 
-1. **Runtime hardening:** worker leases, cancellation, timeout enforcement, safe retry semantics, stale RUNNING recovery and outbox-based dispatch.
+1. **Runtime hardening:** lease renewal/heartbeats, cancellation, handler timeout enforcement, manual reconciliation workflow, safe retry semantics and outbox-based worker dispatch.
 2. **Observability:** span model, parent-child relationships, LLM call metadata, redaction, streaming events and trace visualization.
 3. **Evaluation:** versioned datasets, deterministic evaluators, experiment runs, baseline comparison and regression gates.
 4. **Python SDK:** typed Action client, idempotency helpers, polling/waiting and adapters for external agent frameworks.
