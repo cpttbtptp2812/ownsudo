@@ -87,3 +87,59 @@ def test_worker_requires_a_registered_tool() -> None:
         assert "register at least one" in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_worker_rejects_duplicate_and_invalid_tool_registration() -> None:
+    client = FakeClient(None)
+    worker = LocalWorker(client)
+    worker.register("demo.add", lambda _: {"ok": True})
+    try:
+        worker.register("demo.add", lambda _: {"ok": True})
+    except ValueError as exc:
+        assert "already registered" in str(exc)
+    else:
+        raise AssertionError("expected duplicate registration to fail")
+
+    try:
+        worker.register("", lambda _: {"ok": True})
+    except ValueError as exc:
+        assert "1-128" in str(exc)
+    else:
+        raise AssertionError("expected empty tool name to fail")
+
+
+def test_worker_sends_heartbeat_while_handler_is_running() -> None:
+    import time
+
+    client = FakeClient(sample_claim())
+    worker = LocalWorker(client, heartbeat_interval=0.01)
+    worker.register("demo.add", lambda _: (time.sleep(0.05) or {"ok": True}))
+
+    assert worker.run_once() is True
+    assert client.heartbeats >= 1
+
+
+def test_worker_marks_claim_for_missing_local_handler_unknown() -> None:
+    client = FakeClient(sample_claim())
+    worker = LocalWorker(client)
+    worker.register("demo.add", lambda _: {"ok": True})
+    original = client.claim_worker_action
+
+    def mismatched_claim(tool_names: list[str]) -> dict[str, Any]:
+        original(tool_names)
+        claim = sample_claim()
+        claim["toolName"] = "demo.uninstalled"
+        return claim
+
+    client.claim_worker_action = mismatched_claim  # type: ignore[method-assign]
+    assert worker.run_once() is True
+    assert client.unknown[0][2] == "WORKER_HANDLER_MISSING"
+
+
+def test_worker_rejects_non_dict_handler_output_as_unknown() -> None:
+    client = FakeClient(sample_claim())
+    worker = LocalWorker(client)
+    worker.register("demo.add", lambda _: "not-a-dict")  # type: ignore[arg-type]
+
+    assert worker.run_once() is True
+    assert client.unknown[0][2] == "WORKER_HANDLER_EXCEPTION"
