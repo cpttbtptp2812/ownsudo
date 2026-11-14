@@ -24,5 +24,6 @@ app:
   security:
     approver-api-key: ${OWNAGENT_APPROVER_API_KEY:}
     approver-id: ${OWNAGENT_APPROVER_ID:}
+    tool-admin-api-key: ${OWNAGENT_TOOL_ADMIN_API_KEY:}
     bootstrap-agent-id: ${OWNAGENT_BOOTSTRAP_AGENT_ID:}
     bootstrap-agent-api-key: ${OWNAGENT_BOOTSTRAP_AGENT_API_KEY:}
