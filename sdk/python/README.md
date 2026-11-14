@@ -96,7 +96,7 @@ python examples/demo_agent.py
 
 The example asks the model to research OwnAgent's execution semantics. The model chooses when to call `demo.search_workspace`; the example submits that call as an Action; the Local Worker executes the registered Python function; and the result is returned to the model for its final answer.
 
-The Action lifecycle and tool metadata are persisted by OwnAgent. **The model request itself currently goes directly from the example to the configured LLM endpoint; its token usage is printed from the provider response but is not yet ingested as an OwnAgent LLM trace.** Full model-call tracing is a separate observability milestone.
+The Action lifecycle and tool metadata are persisted by OwnAgent. The model request goes directly from the example to the configured LLM endpoint; the example separately submits a span containing provider-reported token usage to OwnAgent. LLM and Action failures are recorded with `status="ERROR"` when their execution raises. Trace ingestion is best-effort: a telemetry outage is reported to stderr and does not replace the Agent's actual result.
 
 ## SDK API
 
@@ -158,4 +158,4 @@ client.create_trace_span({
 spans = client.get_trace_spans(trace_id)
 ```
 
-Use `usage_source="MISSING"` when the provider does not return usage. Do not put prompts, completions, credentials, or personal data in span attributes. The backend stores span metadata and provider token counts; it does not infer or fabricate usage. Action lifecycle events remain available through the existing Action events endpoint and will be correlated into the waterfall in a later UI integration.
+Use `usage_source="MISSING"` when the provider does not return usage. Do not put prompts, completions, credentials, or personal data in span attributes. The backend stores span metadata and provider token counts; it does not infer or fabricate usage. Action lifecycle events remain available through the existing Action events endpoint. The example currently emits correlated LLM and Action spans; automatic instrumentation for arbitrary frameworks and a full event-backed waterfall remain future work.
