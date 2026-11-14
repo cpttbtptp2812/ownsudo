@@ -83,6 +83,7 @@ public class ActionApplicationService {
         action.setStatus(policy.actionStatus());
         action.setDecision(policy.decision());
         action.setRiskLevel(policy.riskLevel());
+        action.setApprovalStatus("REQUIRE_APPROVAL".equals(policy.decision()) ? "PENDING" : "NOT_REQUIRED");
         return new CreateResult(actionRepository.save(action), true);
     }
 
