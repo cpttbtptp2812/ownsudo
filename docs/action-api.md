@@ -3,14 +3,14 @@
 All `/api/v1` endpoints require an Agent API key:
 
 ```http
-Authorization: Bearer oa_live_<64 hexadecimal characters>
+Authorization: Bearer oa_live_<64 hexadecimal characters>\n\nTool registry writes additionally require `X-OwnAgent-Tool-Admin-Key: $OWNAGENT_TOOL_ADMIN_API_KEY`.
 ```
 
 The Agent ID is resolved by the authentication filter; clients cannot choose the owner in request bodies or query parameters.
 
 ## Register a tool
 
-`POST /api/v1/tools` creates or updates a tool definition for the authenticated Agent. `GET /api/v1/tools` lists only that Agent's tools.
+`POST /api/v1/tools` creates or updates a tool definition for the authenticated Agent. It requires both the Agent Bearer token and a separate developer credential in `X-OwnAgent-Tool-Admin-Key`. This prevents an Agent runtime key from changing its own risk classification. `GET /api/v1/tools` lists only that Agent's tools and requires the Agent Bearer token.
 
 ```json
 {
@@ -70,4 +70,4 @@ This slice does not execute tools, schedule workers, process approvals, append A
 
 ## Database
 
-Production migrations include `V1__create_agent_api_key.sql`, `V2__create_agent_action.sql`, and `V3__create_agent_tool_registry.sql`. Review the production Flyway configuration and back up existing data before deployment.
+Production also requires `OWNAGENT_TOOL_ADMIN_API_KEY` for tool registration. Keep this developer credential separate from Agent runtime API keys.\n\nProduction migrations include `V1__create_agent_api_key.sql`, `V2__create_agent_action.sql`, and `V3__create_agent_tool_registry.sql`. Review the production Flyway configuration and back up existing data before deployment.
