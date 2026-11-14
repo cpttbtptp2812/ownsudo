@@ -106,7 +106,7 @@ public class ActionController {
                     request == null ? null : request.reason()), objectMapper));
         } catch (ActionExecutionStateService.ActionNotFoundException e) {
             return ResponseEntity.notFound().build();
-        } catch (ActionExecutionStateService.ActionStateConflictException e) {
+        } catch (ActionExecutionStateService.ActionStateConflictException | ObjectOptimisticLockingFailureException e) {
             return ResponseEntity.status(409).body(Map.of(
                     "error", Map.of("code", "APPROVAL_STATE_CONFLICT", "message", e.getMessage())));
         }
