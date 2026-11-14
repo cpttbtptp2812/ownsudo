@@ -4,6 +4,8 @@ import com.ownsudo.entity.ActionEntity;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
 import org.springframework.stereotype.Repository;
 import java.time.LocalDateTime;
@@ -18,6 +20,13 @@ public interface ActionRepository extends JpaRepository<ActionEntity, String> {
     List<ActionEntity> findAllByStatusAndLeaseUntilBefore(String status, LocalDateTime cutoff, Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    Optional<ActionEntity> findFirstByAgentIdAndDecisionAndStatusAndToolNameInOrderByCreatedAtAsc(
-            String agentId, String decision, String status, List<String> toolNames);
+    @Query("select a from ActionEntity a where a.agentId = :agentId and a.status = 'READY' "
+            + "and a.toolName in :toolNames and (a.decision = 'ALLOW' "
+            + "or (a.decision = 'REQUIRE_APPROVAL' and a.approvalStatus = 'APPROVED')) "
+            + "order by a.createdAt asc")
+    List<ActionEntity> findEligibleForWorker(@Param("agentId") String agentId,
+                                             @Param("toolNames") List<String> toolNames,
+                                             Pageable pageable);
+
+    List<ActionEntity> findAllByAgentIdAndStatusOrderByCreatedAtDesc(String agentId, String status);
 }
