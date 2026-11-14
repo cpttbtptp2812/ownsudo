@@ -66,10 +66,12 @@ def test_api_error_preserves_code_and_status() -> None:
             "code": "ACTION_STATE_CONFLICT", "message": "Action cannot execute"
         }})
 
-    with OwnAgentClient("http://localhost:8080", "test-key",
-                        transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(OwnAgentAPIError) as error:
-            client.execute_action("act-123")
+    with (
+        OwnAgentClient("http://localhost:8080", "test-key",
+                       transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(OwnAgentAPIError) as error,
+    ):
+        client.execute_action("act-123")
     assert error.value.status_code == 409
     assert error.value.code == "ACTION_STATE_CONFLICT"
 
@@ -93,14 +95,18 @@ def test_timeout_is_explicitly_ambiguous() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("simulated timeout")
 
-    with OwnAgentClient("http://localhost:8080", "test-key",
-                        transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(OwnAgentTimeoutError, match="may have completed"):
-            client.execute_action("act-123")
+    with (
+        OwnAgentClient("http://localhost:8080", "test-key",
+                       transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(OwnAgentTimeoutError, match="may have completed"),
+    ):
+        client.execute_action("act-123")
 
 
 def test_rejects_empty_idempotency_key() -> None:
-    with OwnAgentClient("http://localhost:8080", "test-key",
-                        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={}))) as client:
-        with pytest.raises(ValueError):
-            client.create_action("demo.echo", {}, idempotency_key="")
+    with (
+        OwnAgentClient("http://localhost:8080", "test-key",
+                       transport=httpx.MockTransport(lambda _: httpx.Response(200, json={}))) as client,
+        pytest.raises(ValueError),
+    ):
+        client.create_action("demo.echo", {}, idempotency_key="")
