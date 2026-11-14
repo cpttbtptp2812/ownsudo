@@ -35,6 +35,13 @@ public class TraceController {
         }
     }
 
+    @GetMapping
+    public ResponseEntity<List<TraceSpanResponse>> recent(
+            @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId) {
+        return ResponseEntity.ok(service.recentSpans(agentId).stream()
+                .map(span -> TraceSpanResponse.from(span, mapper)).toList());
+    }
+
     @GetMapping("/{traceId}/spans")
     public ResponseEntity<List<TraceSpanResponse>> list(
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
