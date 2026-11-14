@@ -1,49 +1,154 @@
-﻿# OwnSudo Engine (企业级 AI Agent 编排与零信任 2PC 执行中枢)
+# OwnAgent — AI Agent Engineering Platform
 
-本项目为独立后端工程（位于 `e:\owner\ownsudo`），与前端渲染工程（位于 `e:\owner\builder`）完全解耦，提供高可用、强一致性的 Agent DAG 工作流状态机引擎。
+**Build, run, observe, and evaluate AI Agents.**
 
-## 核心架构设计
+OwnAgent is an open-source engineering platform for the parts of Agent development that are difficult to trust in production: durable execution, tool governance, human approval, observability, and repeatable evaluation.
 
-1. **运行时环境**:
-   - Java 21 (LTS) 虚拟线程就绪
-   - Spring Boot 3.2.5
-   - Spring Data JPA + Hibernate 6.x
-   - MySQL 8.0 关系型数据库持久化 (运行于腾讯云独立实例 `43.142.74.224:3306`)
+It is not another chat wrapper and does not aim to replace every Agent framework. OwnAgent provides a focused execution and engineering layer, with REST and an independently installable Python SDK for integrating externally built Agents.
 
-2. **核心业务能力**:
-   - **DAG 拓扑执行器**: 解析工作流节点拓扑，按依赖顺序异步驱动多阶段推理与工具执行。
-   - **零信任人在回路 2PC 双签门禁 (Two-Phase Commit Gate)**:
-     - 在高危资金划转或生产数据库 DDL/DML 变更节点自动挂起状态机 (`SUSPENDED_APPROVAL`)。
-     - 生成审计工单 (`ApprovalTicket`)，要求合规工程师数字签名审批。
-     - 审批决策完成后计算不可篡改的 SHA-256 审计指纹，解挂并推进下游执行。
-   - **实时全双工事件流 (SSE, Server-Sent Events)**:
-     - 采用 `SseEmitter` 实现流式节点状态广播 (`INSTANCE_STARTED`, `NODE_RUNNING`, `NODE_COMPLETED`, `TICKET_REQUIRED`, `INSTANCE_COMPLETED`)。
-     - 前端 React Flow 画布毫秒级同步变色与高亮。
-   - **MCP 工具协议与数据库适配**:
-     - 封装 Model Context Protocol (MCP) 标准调用规范，直连数据库执行受控 SQL 迁移。
+## What it does
 
-## REST API 核心接口清单
+- **Run Actions:** submit tool operations through an Agent-scoped API and persist their lifecycle.
+- **Govern tools:** register tool metadata, validate input contracts, and evaluate risk policy before execution.
+- **Control execution:** only policy-approved Actions can be claimed by the Runtime.
+- **Inspect outcomes:** persist outputs, failures, attempt counts, timestamps, and lifecycle events.
+- **Keep long actions alive:** renew active execution leases with heartbeats.
+- **Represent uncertainty honestly:** timed-out or interrupted handlers become UNKNOWN rather than falsely reported as failed or retried.
+- **Integrate Agents:** use REST or the early-preview Python SDK under `sdk/python` today.
 
-| 接口路径 | 请求方法 | 描述 |
-| :--- | :--- | :--- |
-| `/api/health` | GET | 引擎与云端 MySQL 存活探针 |
-| `/api/workflow/definitions` | GET | 获取全部预设企业工作流 DAG 模板 |
-| `/api/workflow/run` | POST | 触发新工作流实例运行，返回 `instanceId` |
-| `/api/workflow/instances` | GET | 获取最近执行历史列表 |
-| `/api/workflow/instances/{id}` | GET | 查询指定实例详情及所有节点执行明细 |
-| `/api/workflow/instances/{id}/stream` | GET | 建立 SSE 实时事件流订阅 |
-| `/api/workflow/approvals/pending` | GET | 查询当前待审批的 2PC 门禁工单 |
-| `/api/workflow/approvals/{ticketId}/commit` | POST | 提交 2PC 双签决策 (APPROVED / REJECTED) |
+## Architecture
 
-## 本地编译与启动
+| Component | Responsibility | Technology |
+| --- | --- | --- |
+| Platform API | Agent identity, Actions, tools, policy and trace endpoints | Java 21, Spring Boot 3 |
+| Runtime | Action lifecycle, leases, heartbeat and allowlisted handlers | Spring services, Java virtual threads |
+| Persistence | Agent, Action, Tool and event state | Spring Data JPA, Flyway, MySQL |
+| Studio | Agent management, Action Runs and Trace explorer | React 19, TypeScript, Vite (separate builder repository) |
+| SDK | External Agent integration | Python package (`sdk/python`, early developer preview) |
 
-```bash
-# 设置 Java 21 环境变量
-$env:JAVA_HOME = "C:\Program Files\Java\jdk-21"
+See the architecture and roadmap in docs/architecture/ownagent-engineering-platform.md.
 
-# 编译打包
-mvn clean package -DskipTests
+## Current runtime slice
 
-# 启动服务 (默认监听 8080 端口)
-java -jar target/ownsudo-engine-1.0.0.jar
-```
+The current feature branch implements the following Action lifecycle:
+
+~~~text
+POST /api/v1/actions
+  ├── DENY             -> DENIED
+  ├── REQUIRE_APPROVAL -> PENDING_APPROVAL
+  └── ALLOW            -> READY
+                           |
+                           | POST /api/v1/actions/{id}/execute
+                           v
+                         RUNNING (lease + heartbeat)
+                         /     |      \\
+                   SUCCEEDED FAILED  UNKNOWN
+~~~
+
+The runtime includes two deterministic demonstration handlers:
+
+- demo.echo — returns the supplied message and character count.
+- text.transform — uppercases, lowercases, trims, or reverses text.
+
+These handlers demonstrate policy-gated execution and persisted outcomes. Each RUNNING Action receives a lease; heartbeats extend active leases. Expired leases are recovered as UNKNOWN. Handler timeout or request interruption also becomes UNKNOWN because an interrupted Java thread cannot prove that an external side effect stopped. Tool Registry metadata does **not** execute arbitrary code. No arbitrary shell, SQL, HTTP, or filesystem execution is enabled.
+
+## Python SDK (early developer preview)\n\nAn installable synchronous client is available in `sdk/python`. It supports Action creation, one-shot execution, status polling, and lifecycle event retrieval. It does not automatically retry execution requests. A network timeout is ambiguous and must not trigger blind retries.\n\n~~~bash\ncd sdk/python\npython -m pip install -e .\n~~~\n\n~~~python\nimport os\nfrom ownagent import OwnAgentClient\n\nwith OwnAgentClient(\"http://localhost:8080\", os.environ[\"OWNAGENT_AGENT_API_KEY\"]) as client:\n    action = client.create_action(\n        \"demo.echo\", {\"message\": \"Hello from my Agent\"},\n        idempotency_key=\"my-agent-run-001\",\n    )\n    if action.decision == \"ALLOW\" and action.status == \"READY\":\n        result = client.execute_action(action.action_id)\n        print(result.status, result.output)\n~~~\n\nSee [SDK documentation](sdk/python/README.md) and [basic example](sdk/python/examples/basic_agent.py). The package is independently installable but currently lives in this monorepo; a separate GitHub repository has not yet been created.\n\n## Quick API walkthrough
+
+All /api/v1/** requests require an Agent API key:
+
+~~~bash
+export OWNAGENT_AGENT_KEY="your-agent-api-key"
+export OWNAGENT_BASE_URL="http://localhost:8080"
+
+# 1. Register the demo handler's public input contract.
+# Requires both Agent authentication and the separate developer Tool Admin key.
+curl -X POST "$OWNAGENT_BASE_URL/api/v1/tools" \
+  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY" \
+  -H "X-OwnAgent-Tool-Admin-Key: $OWNAGENT_TOOL_ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "toolName": "demo.echo",
+    "description": "Echo a message",
+    "riskLevel": "LOW",
+    "enabled": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": { "message": { "type": "string" } },
+      "required": ["message"],
+      "additionalProperties": false
+    }
+  }'
+
+# 2. Create an Action. The response is READY, not yet executed.
+curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions" \
+  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "toolName": "demo.echo",
+    "arguments": { "message": "Hello OwnAgent" },
+    "idempotencyKey": "demo-echo-001"
+  }'
+
+# 3. Execute the returned Action ID.
+curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions/<ACTION_ID>/execute" \
+  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY"
+
+# 4. Inspect its persisted lifecycle events.
+curl "$OWNAGENT_BASE_URL/api/v1/actions/<ACTION_ID>/events" \
+  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY"
+~~~
+
+## Local development
+
+Requirements:
+
+- Java 21
+- Maven 3.9+
+- MySQL 8 (or a configured supported development database)
+
+Configure the required environment variables before starting the service. Production configuration intentionally does not contain default database credentials.
+
+~~~bash
+mvn clean verify
+mvn spring-boot:run
+~~~
+
+Runtime configuration:
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| OWNAGENT_ACTION_LEASE_SECONDS | 300 | Lease duration, minimum 30 seconds |
+| OWNAGENT_ACTION_HEARTBEAT_INTERVAL_MS | 10000 | Lease renewal cadence |
+| OWNAGENT_ACTION_TIMEOUT_SECONDS | 60 | Maximum synchronous handler duration |
+| OWNAGENT_ACTION_RECOVERY_INTERVAL_MS | 30000 | Expired lease recovery scan cadence |
+
+The heartbeat interval should be comfortably shorter than the lease duration. Never commit real API keys or database credentials.
+
+## Roadmap
+
+| Phase | Focus | Planned outcome |
+| --- | --- | --- |
+| P0 | Runtime foundation | Durable Action state machine, handler registry, policy-gated execution, event trace |
+| P1 | Developer execution | Python SDK, Local Worker, custom Python tools and approval-to-execution flow |
+| P2 | Runtime hardening | Worker leases, cancellation, manual reconciliation, safe retry semantics and outbox dispatch |
+| P3 | Observability | Nested spans, LLM/tool call metadata, latency/token metrics, redaction and trace visualization |
+| P4 | Evaluation | Versioned datasets, evaluators, experiment runs, baseline comparison and regression gates |
+| P5 | Studio | Agent registry, run explorer, trace waterfall and Evaluation workbench |
+
+## Honest implementation boundaries
+
+- Approval-required Actions are persisted as PENDING_APPROVAL; the approval-to-execution transition is not complete yet.
+- The current execute endpoint is synchronous and uses server-installed handlers. It is not a distributed worker scheduler.
+- Lease heartbeats and handler timeout handling are implemented for this synchronous runtime. Java interruption is best-effort; a timed-out external side effect may still complete.
+- Expired or timed-out executions become UNKNOWN and are not automatically retried. Manual reconciliation UI is not complete.
+- Tool Registry metadata does not execute arbitrary code; only explicitly installed server-side handlers run.
+- Current trace events cover Action lifecycle transitions, not nested LLM spans.
+- The Python SDK is an early developer preview for REST Action operations; it does not provide a Local Worker, custom Python handler execution, async client, or approval resumption.
+- Risk levels are developer-configured and do not constitute a complete authorization language or RBAC model.
+
+## Repositories
+
+- Backend: https://github.com/cpttbtptp2812/ownsudo
+- Frontend Studio: https://github.com/cpttbtptp2812/builder
+
+Contributions and engineering feedback are welcome.
