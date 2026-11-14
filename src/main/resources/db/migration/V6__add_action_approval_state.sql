@@ -10,3 +10,6 @@ WHERE decision = 'REQUIRE_APPROVAL' AND status = 'PENDING_APPROVAL';
 
 CREATE INDEX idx_action_agent_approval
     ON agent_action (agent_id, approval_status, created_at);
+
+CREATE INDEX idx_action_worker_claim
+    ON agent_action (agent_id, status, tool_name, created_at);
