@@ -110,6 +110,58 @@ class OwnAgentClient:
                 )
             time.sleep(min(poll_interval, remaining))
 
+    def claim_worker_action(self, tool_names: list[str]) -> dict[str, Any] | None:
+        """Claim one READY Action for a locally installed tool; returns None when idle."""
+        if not tool_names or len(tool_names) > 100:
+            raise ValueError("tool_names must contain between 1 and 100 names")
+        result = self._request(
+            "POST", "/api/v1/worker/actions/claim", json={"toolNames": tool_names}
+        )
+        return result if isinstance(result, dict) else None
+
+    def heartbeat_worker_action(self, action_id: str, lease_token: str) -> dict[str, Any]:
+        self._require_id(action_id)
+        return self._request(
+            "POST", f"/api/v1/worker/actions/{action_id}/heartbeat",
+            json={"leaseToken": lease_token},
+        )
+
+    def complete_worker_action(
+        self, action_id: str, lease_token: str, output: dict[str, Any]
+    ) -> dict[str, Any]:
+        self._require_id(action_id)
+        return self._request(
+            "POST", f"/api/v1/worker/actions/{action_id}/complete",
+            json={"leaseToken": lease_token, "output": output},
+        )
+
+    def fail_worker_action(
+        self, action_id: str, lease_token: str, error_code: str, error_message: str
+    ) -> dict[str, Any]:
+        self._require_id(action_id)
+        return self._request(
+            "POST", f"/api/v1/worker/actions/{action_id}/fail",
+            json={
+                "leaseToken": lease_token,
+                "errorCode": error_code,
+                "errorMessage": error_message,
+            },
+        )
+
+    def mark_worker_action_unknown(
+        self, action_id: str, lease_token: str, error_code: str, error_message: str
+    ) -> dict[str, Any]:
+        """Record uncertainty when a local handler may have caused a partial side effect."""
+        self._require_id(action_id)
+        return self._request(
+            "POST", f"/api/v1/worker/actions/{action_id}/unknown",
+            json={
+                "leaseToken": lease_token,
+                "errorCode": error_code,
+                "errorMessage": error_message,
+            },
+        )
+
     @staticmethod
     def _require_id(action_id: str) -> None:
         if not action_id or "/" in action_id:
