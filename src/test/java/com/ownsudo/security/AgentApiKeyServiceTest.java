@@ -29,7 +29,7 @@ class AgentApiKeyServiceTest {
         String hash = AgentApiKeyService.hashToken(token);
         AgentApiKeyEntity entity = new AgentApiKeyEntity();
         entity.setAgentId("agent-123");
-        when(repository.findByKeyHashAndActiveTrueAndRevokedAtIsNull(hash))
+        when(repository.findUsableByKeyHash(hash))
                 .thenReturn(Optional.of(entity));
 
         assertEquals(Optional.of("agent-123"), service.authenticate(token));
@@ -38,7 +38,7 @@ class AgentApiKeyServiceTest {
     @Test
     void unknownKeyDoesNotAuthenticate() {
         String token = "oa_live_" + "b".repeat(64);
-        when(repository.findByKeyHashAndActiveTrueAndRevokedAtIsNull(AgentApiKeyService.hashToken(token)))
+        when(repository.findUsableByKeyHash(AgentApiKeyService.hashToken(token)))
                 .thenReturn(Optional.empty());
 
         assertTrue(service.authenticate(token).isEmpty());
