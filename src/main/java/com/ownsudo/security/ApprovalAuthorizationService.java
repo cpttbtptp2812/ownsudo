@@ -16,14 +16,18 @@ import java.security.MessageDigest;
 public class ApprovalAuthorizationService {
 
     private final String configuredApiKey;
+    private final String configuredApproverId;
 
     public ApprovalAuthorizationService(
-            @Value("${app.security.approver-api-key:}") String configuredApiKey) {
+            @Value("${app.security.approver-api-key:}") String configuredApiKey,
+            @Value("${app.security.approver-id:}") String configuredApproverId) {
         this.configuredApiKey = configuredApiKey == null ? "" : configuredApiKey;
+        this.configuredApproverId = configuredApproverId == null ? "" : configuredApproverId;
     }
 
     public boolean isAuthorized(String suppliedApiKey) {
-        if (configuredApiKey.isBlank() || suppliedApiKey == null || suppliedApiKey.isBlank()) {
+        if (configuredApiKey.isBlank() || configuredApproverId.isBlank()
+                || suppliedApiKey == null || suppliedApiKey.isBlank()) {
             return false;
         }
         return MessageDigest.isEqual(
