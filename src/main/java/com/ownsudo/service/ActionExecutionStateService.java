@@ -48,13 +48,56 @@ public class ActionExecutionStateService {
         List<String> safeTools = supportedTools.stream().filter(name -> name != null
                 && name.matches("[A-Za-z][A-Za-z0-9_.:-]{0,127}")).distinct().limit(100).toList();
         if (safeTools.isEmpty()) return Optional.empty();
-        return actions.findFirstByAgentIdAndDecisionAndStatusAndToolNameInOrderByCreatedAtAsc(
-                agentId, "ALLOW", "READY", safeTools).map(this::claimAction);
+        return actions.findEligibleForWorker(agentId, safeTools, PageRequest.of(0, 1))
+                .stream().findFirst().map(this::claimAction);
+    }
+
+    @Transactional
+    public ActionEntity approve(String agentId, String actionId, String approverId, String reason) {
+        return decideApproval(agentId, actionId, approverId, reason, true);
+    }
+
+    @Transactional
+    public ActionEntity reject(String agentId, String actionId, String approverId, String reason) {
+        return decideApproval(agentId, actionId, approverId, reason, false);
+    }
+
+    private ActionEntity decideApproval(String agentId, String actionId, String approverId,
+                                        String reason, boolean approved) {
+        if (approverId == null || approverId.isBlank()) {
+            throw new IllegalArgumentException("A configured approver identity is required");
+        }
+        ActionEntity action = actions.findByIdAndAgentId(actionId, agentId)
+                .orElseThrow(() -> new ActionNotFoundException("Action was not found"));
+        if (!"REQUIRE_APPROVAL".equals(action.getDecision())
+                || !"PENDING_APPROVAL".equals(action.getStatus())
+                || !"PENDING".equals(action.getApprovalStatus())) {
+            throw new ActionStateConflictException("Only pending approval-required Actions can be decided");
+        }
+        LocalDateTime decidedAt = LocalDateTime.now();
+        action.setApprovalStatus(approved ? "APPROVED" : "REJECTED");
+        action.setApprovalDecidedBy(approverId);
+        action.setApprovalDecidedAt(decidedAt);
+        action.setApprovalReason(reason == null ? null : reason.substring(0, Math.min(reason.length(), 1000)));
+        action.setStatus(approved ? "READY" : "DENIED");
+        ActionEntity saved = actions.saveAndFlush(action);
+        appendEvent(agentId, actionId, approved ? "ACTION_APPROVED" : "ACTION_REJECTED", Map.of(
+                "approverId", approverId,
+                "approvalStatus", saved.getApprovalStatus(),
+                "reason", saved.getApprovalReason() == null ? "" : saved.getApprovalReason()));
+        return saved;
+    }
+
+    private boolean isExecutable(ActionEntity action) {
+        return "READY".equals(action.getStatus())
+                && ("ALLOW".equals(action.getDecision())
+                || ("REQUIRE_APPROVAL".equals(action.getDecision())
+                && "APPROVED".equals(action.getApprovalStatus())));
     }
 
     private ActionEntity claimAction(ActionEntity action) {
-        if (!"ALLOW".equals(action.getDecision()) || !"READY".equals(action.getStatus())) {
-            throw new ActionStateConflictException("Only Actions with decision ALLOW and status READY can be executed");
+        if (!isExecutable(action)) {
+            throw new ActionStateConflictException("Only ALLOW/READY or approved REQUIRE_APPROVAL/READY Actions can be executed");
         }
         LocalDateTime now = LocalDateTime.now();
         action.setStatus("RUNNING");
