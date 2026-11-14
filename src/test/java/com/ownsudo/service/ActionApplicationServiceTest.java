@@ -3,7 +3,7 @@ package com.ownsudo.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ownsudo.dto.CreateActionRequest;
 import com.ownsudo.entity.ActionEntity;
-import com.ownsudo.repository.ActionRepository;
+import com.ownsudo.repository.ActionRepository;\nimport com.ownsudo.repository.AgentToolRepository;\nimport com.ownsudo.entity.AgentToolEntity;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Pageable;
 
@@ -127,7 +127,7 @@ class ActionApplicationServiceTest {
         verifyNoInteractions(repository);
     }
 
-    private CreateActionRequest request(String idempotencyKey, Map<String, Object> arguments) {
+    @Test\n    void unregisteredToolIsDeniedWithoutExecution() {\n        when(repository.findByAgentIdAndIdempotencyKey("agent-a", "unknown-key")).thenReturn(Optional.empty());\n        when(repository.save(any(ActionEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));\n        var result=service.create("agent-a", request("unknown-key", Map.of("path","/tmp/x")));\n        assertEquals("DENY", result.action().getDecision());\n        assertEquals("DENIED", result.action().getStatus());\n        assertEquals("UNASSESSED", result.action().getRiskLevel());\n    }\n\n    private CreateActionRequest request(String idempotencyKey, Map<String, Object> arguments) {
         CreateActionRequest request = new CreateActionRequest();
         request.setToolName("file.write");
         request.setArguments(arguments);
