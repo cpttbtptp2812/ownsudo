@@ -79,7 +79,7 @@ class LocalWorker:
             output = handler(arguments)
             if not isinstance(output, dict):
                 raise TypeError("A local tool handler must return a dict")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - arbitrary tool failures can hide partial side effects
             stop_heartbeat.set()
             heartbeat.join(timeout=max(1.0, self._heartbeat_interval))
             try:
