@@ -34,6 +34,7 @@ class ActionApplicationServiceTest {
         assertEquals("READY", result.action().getStatus());
         assertEquals("ALLOW", result.action().getDecision());
         assertEquals("LOW", result.action().getRiskLevel());
+        assertEquals("NOT_REQUIRED", result.action().getApprovalStatus());
         verify(repository).save(any(ActionEntity.class));
     }
 
@@ -70,6 +71,20 @@ class ActionApplicationServiceTest {
         assertThrows(ActionApplicationService.IdempotencyConflictException.class,
                 ()->service.create("agent-a",request("same-key",Map.of("path","/other.txt"))));
         verify(repository,never()).save(any(ActionEntity.class));
+    }
+
+    @Test void mediumRiskActionStartsPendingApproval() {
+        AgentToolEntity tool = new AgentToolEntity();
+        tool.setAgentId("agent-a"); tool.setToolName("file.write"); tool.setRiskLevel("HIGH"); tool.setEnabled(true);
+        when(toolRegistry.find("agent-a", "file.write")).thenReturn(Optional.of(tool));
+        when(repository.findByAgentIdAndIdempotencyKey("agent-a", "approval-key")).thenReturn(Optional.empty());
+        when(repository.save(any(ActionEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var result = service.create("agent-a", request("approval-key", Map.of("path", "/tmp/file.txt")));
+
+        assertEquals("REQUIRE_APPROVAL", result.action().getDecision());
+        assertEquals("PENDING_APPROVAL", result.action().getStatus());
+        assertEquals("PENDING", result.action().getApprovalStatus());
     }
 
     @Test void unknownToolIsDeniedWithoutExecution() {

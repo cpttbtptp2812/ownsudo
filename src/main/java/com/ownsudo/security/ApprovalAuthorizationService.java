@@ -25,6 +25,8 @@ public class ApprovalAuthorizationService {
         this.configuredApproverId = configuredApproverId == null ? "" : configuredApproverId;
     }
 
+    public String getConfiguredApproverId() { return configuredApproverId; }
+
     public boolean isAuthorized(String suppliedApiKey) {
         if (configuredApiKey.isBlank() || configuredApproverId.isBlank()
                 || suppliedApiKey == null || suppliedApiKey.isBlank()) {

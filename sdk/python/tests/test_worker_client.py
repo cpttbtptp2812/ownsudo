@@ -115,3 +115,54 @@ def test_wait_for_terminal_times_out_without_retrying_execution() -> None:
         client.wait_for_terminal("act-123", timeout=0.02, poll_interval=0.01)
 
     assert calls >= 1
+
+
+def test_approval_client_uses_separate_approver_key() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer agent-key"
+        assert request.headers["X-OwnAgent-Approver-Key"] == "approver-key"
+        seen.append(request.method + " " + request.url.path)
+        action = {
+            "actionId": "act-approval",
+            "agentId": "agent-1",
+            "toolName": "demo.sensitive",
+            "status": "READY",
+            "decision": "REQUIRE_APPROVAL",
+            "riskLevel": "HIGH",
+            "arguments": {"target": "prod"},
+            "approvalStatus": "APPROVED",
+            "approvalDecidedBy": "operator-1",
+            "approvalReason": "Reviewed",
+            "attemptCount": 0,
+        }
+        if request.url.path.endswith("pending-approval"):
+            return httpx.Response(200, json=[action])
+        return httpx.Response(200, json=action)
+
+    with OwnAgentClient(
+        "http://localhost:8080", "agent-key",
+        approver_api_key="approver-key",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        pending = client.list_pending_approvals()
+        approved = client.approve_action("act-approval", "Reviewed")
+        rejected = client.reject_action("act-approval", "Unsafe")
+
+    assert pending[0].approval_status == "APPROVED"
+    assert approved.approval_decided_by == "operator-1"
+    assert rejected.approval_reason == "Reviewed"
+    assert seen == [
+        "GET /api/v1/actions/pending-approval",
+        "POST /api/v1/actions/act-approval/approve",
+        "POST /api/v1/actions/act-approval/reject",
+    ]
+
+
+def test_approval_methods_require_separate_approver_key() -> None:
+    with OwnAgentClient("http://localhost:8080", "agent-key") as client:
+        with pytest.raises(ValueError, match="approver_api_key"):
+            client.list_pending_approvals()
+        with pytest.raises(ValueError, match="approver_api_key"):
+            client.approve_action("act-1")

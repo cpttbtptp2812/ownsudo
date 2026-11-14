@@ -83,6 +83,7 @@ public class ActionApplicationService {
         action.setStatus(policy.actionStatus());
         action.setDecision(policy.decision());
         action.setRiskLevel(policy.riskLevel());
+        action.setApprovalStatus("REQUIRE_APPROVAL".equals(policy.decision()) ? "PENDING" : "NOT_REQUIRED");
         return new CreateResult(actionRepository.save(action), true);
     }
 
@@ -95,6 +96,12 @@ public class ActionApplicationService {
     public List<ActionEntity> list(String authenticatedAgentId, int requestedLimit) {
         int limit = Math.max(1, Math.min(MAX_LIMIT, requestedLimit));
         return actionRepository.findAllByAgentIdOrderByCreatedAtDesc(authenticatedAgentId, PageRequest.of(0, limit));
+    }
+
+    @Transactional(readOnly = true)
+    public List<ActionEntity> pendingApprovals(String authenticatedAgentId) {
+        return actionRepository.findAllByAgentIdAndStatusOrderByCreatedAtDesc(
+                authenticatedAgentId, "PENDING_APPROVAL");
     }
 
     private JsonNode sortJson(JsonNode node) {

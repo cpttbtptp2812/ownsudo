@@ -63,6 +63,7 @@ The current feature branch contains:
 - Scheduled stale-run recovery: expired RUNNING Actions become UNKNOWN and require reconciliation; they are never automatically requeued.
 - Agent-scoped Action detail and event APIs.\n- An independently installable Python SDK package (`sdk/python`) for Action APIs, tool metadata registration, and a first Local Worker implementation.
 - Worker claim/heartbeat/complete/fail/unknown endpoints, all scoped to the authenticated Agent identity.
+- Durable approval state for high-risk Actions: a separately authenticated configured approver can approve to READY or reject to DENIED. The original REQUIRE_APPROVAL policy decision is preserved.
 - Local Worker executes only Python callables explicitly registered in the Worker process; it never downloads code from the server.
 
 The demonstration handlers are intentionally deterministic and local. They prove the runtime lifecycle without enabling arbitrary shell, SQL, network, or filesystem execution.
@@ -101,7 +102,10 @@ A handler that is not installed fails explicitly with `TOOL_HANDLER_NOT_FOUND`; 
 - `GET /api/v1/actions/{id}/events` — fetch persisted lifecycle events.
 - `POST /api/v1/tools` — register tool metadata (requires Agent key and developer tool-admin key).
 - `GET /api/v1/tools` — list the authenticated Agent's tool metadata.
-- `POST /api/v1/worker/actions/claim` — claim the oldest ALLOW/READY Action matching installed local tool names.
+- `GET /api/v1/actions/pending-approval` — list this Agent's pending approvals (Agent key + approver key).
+- `POST /api/v1/actions/{id}/approve` — record an authenticated approval and transition to READY.
+- `POST /api/v1/actions/{id}/reject` — record an authenticated rejection and transition to DENIED.
+- `POST /api/v1/worker/actions/claim` — claim the oldest ALLOW/READY or approved REQUIRE_APPROVAL/READY Action matching installed local tool names.
 - `POST /api/v1/worker/actions/{id}/heartbeat` — renew the active Worker lease.
 - `POST /api/v1/worker/actions/{id}/complete` — persist Worker output.
 - `POST /api/v1/worker/actions/{id}/fail` — persist an explicitly known failure.
@@ -111,7 +115,7 @@ All `/api/v1/**` requests require an Agent Bearer API key. Tool registration add
 
 ## Next milestones
 
-1. **Developer execution:** First Local Worker protocol and custom Python handlers are implemented as an early preview. Next: approval-to-execution flow, independent Worker enrollment credentials and OS-level sandboxing.
+1. **Developer execution:** Python SDK, Local Worker preview and single-configured-approver approval resumption are implemented. Next: independent Worker enrollment credentials and OS-level sandboxing.
 2. **Runtime hardening:** worker leases, cancellation, manual reconciliation workflow, safe retry semantics and outbox-based worker dispatch.
 3. **Observability:** span model, parent-child relationships, LLM call metadata, redaction, streaming events and trace visualization.
 4. **Evaluation:** versioned datasets, deterministic evaluators, experiment runs, baseline comparison and regression gates.

@@ -42,6 +42,7 @@ with OwnAgentClient(
     os.environ["OWNAGENT_BASE_URL"],
     os.environ["OWNAGENT_AGENT_API_KEY"],
     tool_admin_api_key=os.environ["OWNAGENT_TOOL_ADMIN_API_KEY"],
+    approver_api_key=os.environ["OWNAGENT_APPROVER_API_KEY"],
 ) as client:
     client.register_tool(
         "demo.local_greeting",
@@ -72,11 +73,12 @@ action = client.create_action(
 )
 ```
 
-The Action is eligible for the Worker only when the server policy returns `ALLOW` and the status is `READY`. The Worker claims only tool names for which the local process has registered a handler. You can run the Agent and Worker as separate processes.
+The Action is eligible for the Worker when the server policy returns `ALLOW / READY`, or when an Action with `REQUIRE_APPROVAL` has been explicitly approved and returned to `READY`. The Worker claims only tool names for which the local process has registered a handler. You can run the Agent and Worker as separate processes.
 
 ## SDK API
 
 - `register_tool(tool_name, description, input_schema, risk_level="LOW", enabled=True)` — requires `tool_admin_api_key`
+- `list_pending_approvals()`, `approve_action(action_id, reason=None)`, `reject_action(action_id, reason=None)` — require the separate `approver_api_key`
 - `create_action(tool_name, arguments, idempotency_key=..., metadata=None)`
 - `execute_action(action_id)` — sends exactly one server-side execution request; never automatically retried
 - `get_action(action_id)`
@@ -97,7 +99,7 @@ The Action is eligible for the Worker only when the server policy returns `ALLOW
 - The Worker never blindly retries a claimed Action. If the completion request times out, its outcome is ambiguous; server lease recovery eventually marks an unresolved execution `UNKNOWN`.
 - `UNKNOWN` requires reconciliation against the external system before a new Action is submitted.
 - The Worker currently processes one Action at a time per process. Run multiple Worker processes for concurrency; the database row lock and lease token prevent duplicate claims of the same Action.
-- Approval-required Actions can be created and inspected, but approval resumption is not implemented yet. A Worker claims only `ALLOW / READY` Actions.
+- Approval-required Actions can be listed and decided using the separate approver key. Approval preserves the original `REQUIRE_APPROVAL` policy decision, records the configured approver and reason, and moves the Action to `READY`; rejection moves it to `DENIED`. A Worker can claim an approved Action only after that state transition.
 - The SDK is synchronous. Async client, OS-level sandboxing, Worker enrollment/independent credentials, approval resumption, automatic safe retries, MCP integration and framework adapters remain future work.
 
 ## Errors

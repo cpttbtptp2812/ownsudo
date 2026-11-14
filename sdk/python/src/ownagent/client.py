@@ -22,6 +22,7 @@ class OwnAgentClient:
         *,
         timeout: float = 15.0,
         tool_admin_api_key: str | None = None,
+        approver_api_key: str | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         if not base_url.strip():
@@ -29,6 +30,7 @@ class OwnAgentClient:
         if not api_key.strip():
             raise ValueError("api_key must not be empty")
         self._tool_admin_api_key = tool_admin_api_key
+        self._approver_api_key = approver_api_key
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
@@ -138,6 +140,36 @@ class OwnAgentClient:
                     f"Stopped waiting for Action {action_id}; its remote execution may continue"
                 )
             time.sleep(min(poll_interval, remaining))
+
+    def list_pending_approvals(self) -> list[Action]:
+        """List pending approvals for this Agent; requires a separate approver key."""
+        if not self._approver_api_key:
+            raise ValueError("approver_api_key is required to list pending approvals")
+        data = self._request(
+            "GET", "/api/v1/actions/pending-approval",
+            headers={"X-OwnAgent-Approver-Key": self._approver_api_key},
+        )
+        return [Action.from_dict(item) for item in data]
+
+    def approve_action(self, action_id: str, reason: str | None = None) -> Action:
+        return self._decide_action_approval(action_id, "approve", reason)
+
+    def reject_action(self, action_id: str, reason: str | None = None) -> Action:
+        return self._decide_action_approval(action_id, "reject", reason)
+
+    def _decide_action_approval(
+        self, action_id: str, decision: str, reason: str | None
+    ) -> Action:
+        self._require_id(action_id)
+        if not self._approver_api_key:
+            raise ValueError("approver_api_key is required to decide Action approvals")
+        body = {"reason": reason} if reason is not None else {}
+        result = self._request(
+            "POST", f"/api/v1/actions/{action_id}/{decision}",
+            headers={"X-OwnAgent-Approver-Key": self._approver_api_key},
+            json=body,
+        )
+        return Action.from_dict(result)
 
     def claim_worker_action(self, tool_names: list[str]) -> dict[str, Any] | None:
         """Claim one READY Action for a locally installed tool; returns None when idle."""

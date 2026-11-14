@@ -41,8 +41,8 @@ class ActionExecutionStateServiceTest {
     void workerClaimsOldestAllowedReadyActionForAnInstalledTool() {
         ActionEntity action = action("ALLOW", "READY");
         action.setToolName("demo.echo");
-        when(actions.findFirstByAgentIdAndDecisionAndStatusAndToolNameInOrderByCreatedAtAsc(
-                "agent-a", "ALLOW", "READY", List.of("demo.echo"))).thenReturn(Optional.of(action));
+        when(actions.findEligibleForWorker(eq("agent-a"), eq(List.of("demo.echo")), any()))
+                .thenReturn(List.of(action));
         when(actions.saveAndFlush(action)).thenReturn(action);
 
         Optional<ActionEntity> claimed = service.claimNext("agent-a", List.of("demo.echo"));
@@ -52,6 +52,84 @@ class ActionExecutionStateServiceTest {
         assertNotNull(claimed.get().getLeaseToken());
         verify(events).save(argThat(event -> "ACTION_STARTED".equals(event.getEventType())
                 && "act-1".equals(event.getActionId())));
+    }
+
+    @Test
+    void approvesPendingActionAndMakesItReadyForWorkerExecution() {
+        ActionEntity action = action("REQUIRE_APPROVAL", "PENDING_APPROVAL");
+        action.setApprovalStatus("PENDING");
+        when(actions.findByIdAndAgentId("act-1", "agent-a")).thenReturn(Optional.of(action));
+        when(actions.saveAndFlush(action)).thenReturn(action);
+
+        ActionEntity approved = service.approve("agent-a", "act-1", "operator-1", "Reviewed risk");
+
+        assertEquals("READY", approved.getStatus());
+        assertEquals("REQUIRE_APPROVAL", approved.getDecision());
+        assertEquals("APPROVED", approved.getApprovalStatus());
+        assertEquals("operator-1", approved.getApprovalDecidedBy());
+        assertNotNull(approved.getApprovalDecidedAt());
+        assertEquals("Reviewed risk", approved.getApprovalReason());
+        verify(events).save(argThat(event -> "ACTION_APPROVED".equals(event.getEventType())));
+    }
+
+    @Test
+    void rejectedActionCannotBeClaimedByWorker() {
+        ActionEntity action = action("REQUIRE_APPROVAL", "PENDING_APPROVAL");
+        action.setApprovalStatus("PENDING");
+        when(actions.findByIdAndAgentId("act-1", "agent-a")).thenReturn(Optional.of(action));
+        when(actions.saveAndFlush(action)).thenReturn(action);
+
+        ActionEntity rejected = service.reject("agent-a", "act-1", "operator-1", "Unsafe operation");
+
+        assertEquals("DENIED", rejected.getStatus());
+        assertEquals("REJECTED", rejected.getApprovalStatus());
+        assertEquals("operator-1", rejected.getApprovalDecidedBy());
+        assertNotNull(rejected.getApprovalDecidedAt());
+        assertThrows(ActionExecutionStateService.ActionStateConflictException.class,
+                () -> service.claim("agent-a", "act-1"));
+        verify(events).save(argThat(event -> "ACTION_REJECTED".equals(event.getEventType())));
+    }
+
+    @Test
+    void approvedHighRiskActionCanBeClaimedByWorker() {
+        ActionEntity action = action("REQUIRE_APPROVAL", "READY");
+        action.setApprovalStatus("APPROVED");
+        when(actions.findByIdAndAgentId("act-1", "agent-a")).thenReturn(Optional.of(action));
+        when(actions.saveAndFlush(action)).thenReturn(action);
+
+        ActionEntity claimed = service.claim("agent-a", "act-1");
+
+        assertEquals("RUNNING", claimed.getStatus());
+        assertEquals("REQUIRE_APPROVAL", claimed.getDecision());
+        assertEquals("APPROVED", claimed.getApprovalStatus());
+        verify(events).save(argThat(event -> "ACTION_STARTED".equals(event.getEventType())));
+    }
+
+    @Test
+    void approvalDecisionCannotBeAppliedTwice() {
+        ActionEntity action = action("REQUIRE_APPROVAL", "READY");
+        action.setApprovalStatus("APPROVED");
+        when(actions.findByIdAndAgentId("act-1", "agent-a")).thenReturn(Optional.of(action));
+
+        assertThrows(ActionExecutionStateService.ActionStateConflictException.class,
+                () -> service.reject("agent-a", "act-1", "operator-1", "Late rejection"));
+        verify(actions, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void workerCanClaimAnApprovedHighRiskAction() {
+        ActionEntity action = action("REQUIRE_APPROVAL", "READY");
+        action.setToolName("demo.sensitive");
+        action.setApprovalStatus("APPROVED");
+        when(actions.findEligibleForWorker(eq("agent-a"), eq(List.of("demo.sensitive")), any()))
+                .thenReturn(List.of(action));
+        when(actions.saveAndFlush(action)).thenReturn(action);
+
+        Optional<ActionEntity> claimed = service.claimNext("agent-a", List.of("demo.sensitive"));
+
+        assertTrue(claimed.isPresent());
+        assertEquals("RUNNING", claimed.get().getStatus());
+        assertEquals("APPROVED", claimed.get().getApprovalStatus());
     }
 
     @Test
