@@ -4,6 +4,8 @@ server:
 spring:
   application:
     name: ownsudo-engine
+  flyway:
+    enabled: false
   profiles:
     active: local
 
