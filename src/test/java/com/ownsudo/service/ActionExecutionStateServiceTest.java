@@ -2,10 +2,11 @@ package com.ownsudo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ownsudo.entity.ActionEntity;
-import com.ownsudo.entity.ActionEventEntity;
 import com.ownsudo.repository.ActionEventRepository;
 import com.ownsudo.repository.ActionRepository;
 import org.junit.jupiter.api.Test;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -15,10 +16,10 @@ class ActionExecutionStateServiceTest {
     private final ActionRepository actions = mock(ActionRepository.class);
     private final ActionEventRepository events = mock(ActionEventRepository.class);
     private final ActionExecutionStateService service =
-            new ActionExecutionStateService(actions, events, new ObjectMapper());
+            new ActionExecutionStateService(actions, events, new ObjectMapper(), 300);
 
     @Test
-    void claimsOnlyAllowedReadyActionAndPersistsStartedEvent() {
+    void claimsOnlyAllowedReadyActionAndPersistsLeaseAndStartedEvent() {
         ActionEntity action = action("ALLOW", "READY");
         when(actions.findByIdAndAgentId("act-1", "agent-a")).thenReturn(Optional.of(action));
         when(actions.saveAndFlush(action)).thenReturn(action);
@@ -28,6 +29,8 @@ class ActionExecutionStateServiceTest {
         assertEquals("RUNNING", claimed.getStatus());
         assertEquals(1, claimed.getAttemptCount());
         assertNotNull(claimed.getStartedAt());
+        assertNotNull(claimed.getLeaseToken());
+        assertTrue(claimed.getLeaseUntil().isAfter(LocalDateTime.now()));
         verify(events).save(argThat(event -> "ACTION_STARTED".equals(event.getEventType())
                 && "act-1".equals(event.getActionId())));
     }
@@ -51,6 +54,25 @@ class ActionExecutionStateServiceTest {
         assertThrows(ActionExecutionStateService.ActionStateConflictException.class,
                 () -> service.claim("agent-a", "act-1"));
         verify(actions, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void expiredRunningActionBecomesUnknownAndIsNotRequeued() {
+        ActionEntity expired = action("ALLOW", "RUNNING");
+        expired.setLeaseToken("old-lease");
+        expired.setLeaseUntil(LocalDateTime.now().minusMinutes(1));
+        when(actions.findAllByStatusAndLeaseUntilBefore(eq("RUNNING"), any(LocalDateTime.class), any()))
+                .thenReturn(List.of(expired));
+        when(actions.saveAndFlush(expired)).thenReturn(expired);
+
+        int recovered = service.recoverExpiredLeases();
+
+        assertEquals(1, recovered);
+        assertEquals("UNKNOWN", expired.getStatus());
+        assertEquals("EXECUTION_LEASE_EXPIRED", expired.getErrorCode());
+        assertNull(expired.getLeaseToken());
+        assertNull(expired.getLeaseUntil());
+        verify(events).save(argThat(event -> "ACTION_LEASE_EXPIRED".equals(event.getEventType())));
     }
 
     private ActionEntity action(String decision, String status) {
