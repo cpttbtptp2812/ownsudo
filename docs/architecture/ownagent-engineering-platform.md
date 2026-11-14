@@ -2,7 +2,7 @@
 
 OwnAgent is an open-source engineering platform for building, running, observing, and evaluating AI agents.
 
-It is not intended to replace every agent framework. It provides a durable execution and engineering layer that can host its own focused runtime and accept externally built agents through REST and a planned Python SDK.
+It is not intended to replace every agent framework. It provides a durable execution and engineering layer that can host its own focused runtime and accept externally built agents through REST and an early-preview Python SDK.
 
 ## Product promise
 
@@ -20,7 +20,7 @@ The platform has three product surfaces:
 | --- | --- |
 | `ownsudo` | Java 21 / Spring Boot platform API, persistence, policy and runtime |
 | `builder` | React / TypeScript Studio for agents, runs, traces and evaluations |
-| Future `ownagent-python` | Python SDK and adapters for external Agent implementations |
+| `sdk/python` package | Independently installable synchronous Python REST client (early developer preview) |
 
 Python remains an SDK/integration surface. The authoritative Action state and policy decisions live in the Java service.
 
@@ -61,7 +61,7 @@ The current feature branch contains:
 - Heartbeat lease renewal while a synchronous handler is active. Renewal requires the same token and an unexpired lease; an expired lease cannot be resurrected.
 - Configurable handler timeout. Timed-out or interrupted executions become UNKNOWN, clear the active lease, and emit `ACTION_EXECUTION_UNKNOWN`.
 - Scheduled stale-run recovery: expired RUNNING Actions become UNKNOWN and require reconciliation; they are never automatically requeued.
-- Agent-scoped Action detail and event APIs.
+- Agent-scoped Action detail and event APIs.\n- An independently installable Python SDK package (`sdk/python`) for create/execute/get/list/wait/events, with explicit API errors and no automatic execution retries.
 
 The demonstration handlers are intentionally deterministic and local. They prove the runtime lifecycle without enabling arbitrary shell, SQL, network, or filesystem execution.
 
@@ -104,7 +104,7 @@ All `/api/v1/**` requests require an Agent Bearer API key. Tool registration add
 
 ## Next milestones
 
-1. **Developer execution:** typed Python SDK, Local Worker protocol, custom Python handlers and approval-to-execution flow.
+1. **Developer execution:** Local Worker protocol, custom Python handlers and approval-to-execution flow. The synchronous REST Python SDK exists as an early developer preview.
 2. **Runtime hardening:** worker leases, cancellation, manual reconciliation workflow, safe retry semantics and outbox-based worker dispatch.
 3. **Observability:** span model, parent-child relationships, LLM call metadata, redaction, streaming events and trace visualization.
 4. **Evaluation:** versioned datasets, deterministic evaluators, experiment runs, baseline comparison and regression gates.
