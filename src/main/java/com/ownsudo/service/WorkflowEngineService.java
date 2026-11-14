@@ -271,34 +271,34 @@ public class WorkflowEngineService {
                 }
 
                 long httpStart = System.currentTimeMillis();
-                try {
-                    HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                            .uri(URI.create(apiUrl))
-                            .timeout(Duration.ofSeconds(4));
+                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                        .uri(URI.create(apiUrl))
+                        .timeout(Duration.ofSeconds(4));
 
-                    if ("POST".equalsIgnoreCase(method)) {
-                        String bodyJson = objectMapper.writeValueAsString(ctx);
-                        reqBuilder.POST(HttpRequest.BodyPublishers.ofString(bodyJson))
-                                  .header("Content-Type", "application/json");
-                    } else {
-                        reqBuilder.GET();
-                    }
+                if ("POST".equalsIgnoreCase(method)) {
+                    String bodyJson = objectMapper.writeValueAsString(ctx);
+                    reqBuilder.POST(HttpRequest.BodyPublishers.ofString(bodyJson))
+                              .header("Content-Type", "application/json");
+                } else if ("GET".equalsIgnoreCase(method)) {
+                    reqBuilder.GET();
+                } else {
+                    throw new IllegalArgumentException("Unsupported HTTP method: " + method);
+                }
 
-                    HttpResponse<String> response = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
-                    long httpDuration = System.currentTimeMillis() - httpStart;
+                HttpResponse<String> response = httpClient.send(
+                        reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+                long httpDuration = System.currentTimeMillis() - httpStart;
 
-                    output.put("endpoint", apiUrl);
-                    output.put("method", method);
-                    output.put("httpStatus", response.statusCode());
-                    output.put("networkLatencyMs", httpDuration);
-                    output.put("responseHeaders", response.headers().map().keySet());
-                    output.put("responseBody", response.body());
-                } catch (Exception e) {
-                    output.put("endpoint", apiUrl);
-                    output.put("method", method);
-                    output.put("httpStatus", 503);
-                    output.put("error", "HTTP 请求异常: " + e.getMessage());
-                    output.put("fallbackStatus", "INTERNAL_RETRY_SCHEDULED");
+                output.put("endpoint", apiUrl);
+                output.put("method", method);
+                output.put("httpStatus", response.statusCode());
+                output.put("networkLatencyMs", httpDuration);
+                output.put("responseHeaders", response.headers().map().keySet());
+                output.put("responseBody", response.body());
+
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IllegalStateException(
+                            "HTTP tool returned non-success status: " + response.statusCode());
                 }
 
             } else if ("LLM_REDUCE".equalsIgnoreCase(nodeType)) {
@@ -315,7 +315,8 @@ public class WorkflowEngineService {
                 output.put("tokenUsage", tokens);
 
             } else {
-                output.put("result", "节点真实执行完成，上下文包含: " + ctx.keySet());
+                throw new UnsupportedOperationException(
+                        "Workflow node type is not implemented: " + nodeType);
             }
 
             return output;
@@ -363,12 +364,12 @@ public class WorkflowEngineService {
         broadcastEvent(instanceId, runningMsg);
 
         long start = System.currentTimeMillis();
-        Object result = supplier.execute();
-        long physicalLatencyMs = Math.max(1, System.currentTimeMillis() - start);
+        try {
+            Object result = supplier.execute();
+            long physicalLatencyMs = Math.max(1, System.currentTimeMillis() - start);
+            String output = result instanceof String ? (String) result : objectMapper.writeValueAsString(result);
 
-        String output = result instanceof String ? (String) result : objectMapper.writeValueAsString(result);
-
-        NodeExecution node = new NodeExecution();
+            NodeExecution node = new NodeExecution();
         node.setId("exec-" + UUID.randomUUID().toString().substring(0, 8));
         node.setInstanceId(instanceId);
         node.setNodeId(nodeId);
@@ -386,6 +387,36 @@ public class WorkflowEngineService {
         completeMsg.setNodeName(nodeName);
         completeMsg.setNodeType(nodeType);
         broadcastEvent(instanceId, completeMsg);
+        } catch (Exception e) {
+            long physicalLatencyMs = Math.max(1, System.currentTimeMillis() - start);
+            String errorMessage = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+
+            NodeExecution failedNode = new NodeExecution();
+            failedNode.setId("exec-" + UUID.randomUUID().toString().substring(0, 8));
+            failedNode.setInstanceId(instanceId);
+            failedNode.setNodeId(nodeId);
+            failedNode.setNodeName(nodeName);
+            failedNode.setNodeType(nodeType);
+            failedNode.setStatus("FAILED");
+            try {
+                failedNode.setOutputPayload(objectMapper.writeValueAsString(Map.of(
+                        "error", errorMessage,
+                        "errorType", e.getClass().getSimpleName())));
+            } catch (Exception serializationError) {
+                failedNode.setOutputPayload(errorMessage);
+            }
+            failedNode.setStartedAt(LocalDateTime.now().minusNanos(physicalLatencyMs * 1_000_000));
+            failedNode.setLatencyMs(physicalLatencyMs);
+            failedNode.setEndedAt(LocalDateTime.now());
+            nodeExecutionRepository.save(failedNode);
+
+            WorkflowEventMessage failedMsg = new WorkflowEventMessage(
+                    "NODE_FAILED", instanceId, nodeId, "FAILED", errorMessage);
+            failedMsg.setNodeName(nodeName);
+            failedMsg.setNodeType(nodeType);
+            broadcastEvent(instanceId, failedMsg);
+            throw e;
+        }
     }
 
     /**
