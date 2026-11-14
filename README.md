@@ -37,6 +37,8 @@ The current feature branch implements the following Action lifecycle:
 POST /api/v1/actions
   ├── DENY             -> DENIED
   ├── REQUIRE_APPROVAL -> PENDING_APPROVAL
+  │                         ├── POST /approve -> READY (APPROVED)
+  │                         └── POST /reject  -> DENIED
   └── ALLOW            -> READY
                            |
                            | POST /api/v1/actions/{id}/execute
@@ -70,9 +72,21 @@ Configure OWNAGENT_BASE_URL, OWNAGENT_AGENT_API_KEY, and OWNAGENT_TOOL_ADMIN_API
 python examples/local_worker.py
 ~~~
 
-The Worker claims only ALLOW / READY Actions for tool names registered in the local process. The Agent and Worker can run as separate processes. See the SDK documentation and examples/local_worker.py for the full workflow.
+The Worker claims only ALLOW / READY or approved REQUIRE_APPROVAL / READY Actions for tool names registered in the local process. The Agent and Worker can run as separate processes. See the SDK documentation and examples/local_worker.py for the full workflow.
 
-Important boundaries: this first Worker runs in the host process and is not a sandbox. It uses the Agent API key, processes one Action at a time per process, and does not automatically retry. Handler exceptions and ambiguous completion outcomes become UNKNOWN. Approval resumption, independent Worker enrollment credentials, OS-level sandboxing, and manual reconciliation remain future work.
+Important boundaries: this first Worker runs in the host process and is not a sandbox. It uses the Agent API key, processes one Action at a time per process, and does not automatically retry. Handler exceptions and ambiguous completion outcomes become UNKNOWN. Independent Worker enrollment credentials, OS-level sandboxing, and manual reconciliation remain future work. High-risk Actions now require a configured approver before a Worker can claim them.
+
+## Action approval API
+
+The approval endpoints require both the Agent Bearer key and the separate X-OwnAgent-Approver-Key header. The approver identity is taken from server configuration, never from the request body.
+
+~~~http
+GET  /api/v1/actions/pending-approval
+POST /api/v1/actions/{id}/approve
+POST /api/v1/actions/{id}/reject
+~~~
+
+Approval preserves the original policy decision REQUIRE_APPROVAL. An approved Action transitions to READY with approvalStatus=APPROVED and can then be executed by the synchronous Runtime or claimed by a matching Local Worker. Rejected Actions transition to DENIED. Both decisions record the configured approver, timestamp, reason, and lifecycle event.
 
 ## Quick API walkthrough
 
@@ -151,7 +165,7 @@ The heartbeat interval should be comfortably shorter than the lease duration. Ne
 | Phase | Focus | Planned outcome |
 | --- | --- | --- |
 | P0 | Runtime foundation | Durable Action state machine, handler registry, policy-gated execution, event trace |
-| P1 | Developer execution | Python SDK, Local Worker, custom Python tools and approval-to-execution flow |
+| P1 | Developer execution | Python SDK and Local Worker preview; approval-to-execution flow implemented for the single configured approver |
 | P2 | Runtime hardening | Worker leases, cancellation, manual reconciliation, safe retry semantics and outbox dispatch |
 | P3 | Observability | Nested spans, LLM/tool call metadata, latency/token metrics, redaction and trace visualization |
 | P4 | Evaluation | Versioned datasets, evaluators, experiment runs, baseline comparison and regression gates |
@@ -159,7 +173,7 @@ The heartbeat interval should be comfortably shorter than the lease duration. Ne
 
 ## Honest implementation boundaries
 
-- Approval-required Actions are persisted as PENDING_APPROVAL; the approval-to-execution transition is not complete yet.
+- Approval-required Actions persist PENDING / APPROVED / REJECTED decisions. Approval moves an Action to READY; rejection moves it to DENIED. The original REQUIRE_APPROVAL policy decision is retained for audit.
 - The current execute endpoint is synchronous and uses server-installed handlers. It is not a distributed worker scheduler.
 - Lease heartbeats and handler timeout handling are implemented for this synchronous runtime. Java interruption is best-effort; a timed-out external side effect may still complete.
 - Expired or timed-out executions become UNKNOWN and are not automatically retried. Manual reconciliation UI is not complete.
