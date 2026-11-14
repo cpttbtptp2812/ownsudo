@@ -1,6 +1,6 @@
 # OwnAgent Action API (initial integration slice)
 
-The API accepts an action request from an authenticated Agent, persists it with Agent ownership, and exposes scoped retrieval. This slice intentionally stops before policy evaluation and tool execution: a newly created action is returned as `PENDING_POLICY`, with `decision=UNDECIDED` and `riskLevel=UNASSESSED`.
+The API accepts an action request from an authenticated Agent, resolves an Agent-owned registered tool, validates its declared input schema, evaluates a deterministic policy, persists the decision, and exposes scoped retrieval. Tool execution is not yet implemented.
 
 All endpoints are under `/api/v1` and require:
 
@@ -33,7 +33,7 @@ Authorization: Bearer $OWNAGENT_AGENT_API_KEY
 }
 ```
 
-A newly persisted request returns HTTP 201. Repeating the same key for the same Agent and same `toolName` + `arguments` returns the existing Action with HTTP 200. Object key order is normalized before fingerprinting. Reusing the same Agent-scoped key with different operation content returns HTTP 409. Metadata is stored but does not change the operation fingerprint.
+A newly persisted request returns HTTP 201. Its initial status and decision are derived from the registered tool risk policy. Repeating the same key for the same Agent and same `toolName` + `arguments` returns the existing Action with HTTP 200. Object key order is normalized before fingerprinting. Reusing the same Agent-scoped key with different operation content returns HTTP 409. Metadata is stored but does not change the operation fingerprint.
 
 The database also enforces a unique constraint on `(agent_id, idempotency_key)`. A concurrent first-write race may return HTTP 409; retry the same key to retrieve the winning Action.
 
@@ -56,4 +56,4 @@ Do not interpret `PENDING_POLICY` as a queued/running action or as evidence that
 
 ## Database
 
-Production uses Flyway migration `V2__create_agent_action.sql`. The default/local configuration leaves Flyway disabled and uses the project's existing local Hibernate schema behavior. Production Flyway baseline is configured separately in `application-prod.yml`; back up and review an existing database before deployment.
+Production uses Flyway migrations `V2__create_agent_action.sql` and `V3__create_agent_tool_registry.sql`. The default/local configuration leaves Flyway disabled and uses the project's existing local Hibernate schema behavior. Production Flyway baseline is configured separately in `application-prod.yml`; back up and review an existing database before deployment.
