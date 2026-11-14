@@ -111,10 +111,10 @@ public class ActionEntity {
     public void setLeaseUntil(LocalDateTime leaseUntil) { this.leaseUntil = leaseUntil; }
     public String getApprovalStatus() { return approvalStatus; }
     public void setApprovalStatus(String approvalStatus) { this.approvalStatus = approvalStatus; }
-    public String getApprovalDecidedBy() { return approvedBy; }
-    public void setApprovalDecidedBy(String approvedBy) { this.approvedBy = approvedBy; }
-    public LocalDateTime getApprovalDecidedAt() { return approvedAt; }
-    public void setApprovalDecidedAt(LocalDateTime approvedAt) { this.approvedAt = approvedAt; }
+    public String getApprovalDecidedBy() { return approvalDecidedBy; }
+    public void setApprovalDecidedBy(String approvalDecidedBy) { this.approvalDecidedBy = approvalDecidedBy; }
+    public LocalDateTime getApprovalDecidedAt() { return approvalDecidedAt; }
+    public void setApprovalDecidedAt(LocalDateTime approvalDecidedAt) { this.approvalDecidedAt = approvalDecidedAt; }
     public String getApprovalReason() { return approvalReason; }
     public void setApprovalReason(String approvalReason) { this.approvalReason = approvalReason; }
     public long getVersion() { return version; }
