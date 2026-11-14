@@ -1,13 +1,17 @@
 package com.ownsudo.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ownsudo.dto.ActionEventResponse;
 import com.ownsudo.dto.ActionResponse;
 import com.ownsudo.dto.CreateActionRequest;
 import com.ownsudo.security.AgentApiKeyFilter;
 import com.ownsudo.service.ActionApplicationService;
 import com.ownsudo.service.ActionApplicationService.IdempotencyConflictException;
+import com.ownsudo.service.ActionExecutionService;
+import com.ownsudo.service.ActionExecutionStateService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -18,10 +22,15 @@ import java.util.Map;
 public class ActionController {
 
     private final ActionApplicationService actionService;
+    private final ActionExecutionService executionService;
+    private final ActionExecutionStateService executionState;
     private final ObjectMapper objectMapper;
 
-    public ActionController(ActionApplicationService actionService, ObjectMapper objectMapper) {
+    public ActionController(ActionApplicationService actionService, ActionExecutionService executionService,
+                            ActionExecutionStateService executionState, ObjectMapper objectMapper) {
         this.actionService = actionService;
+        this.executionService = executionService;
+        this.executionState = executionState;
         this.objectMapper = objectMapper;
     }
 
@@ -40,7 +49,6 @@ public class ActionController {
             return ResponseEntity.badRequest().body(Map.of(
                     "error", Map.of("code", "INVALID_ACTION_REQUEST", "message", e.getMessage())));
         } catch (DataIntegrityViolationException e) {
-            // A concurrent request may win the same Agent-scoped unique idempotency key.
             return ResponseEntity.status(409).body(Map.of(
                     "error", Map.of("code", "IDEMPOTENCY_CONFLICT", "message", "An Action with this idempotencyKey was created concurrently; retry with the same key")));
         }
@@ -51,8 +59,7 @@ public class ActionController {
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
             @RequestParam(defaultValue = "50") int limit) {
         List<ActionResponse> actions = actionService.list(agentId, limit).stream()
-                .map(action -> ActionResponse.from(action, objectMapper))
-                .toList();
+                .map(action -> ActionResponse.from(action, objectMapper)).toList();
         return ResponseEntity.ok(actions);
     }
 
@@ -64,5 +71,28 @@ public class ActionController {
                 .map(action -> ActionResponse.from(action, objectMapper))
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/{actionId}/execute")
+    public ResponseEntity<?> execute(
+            @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
+            @PathVariable String actionId) {
+        try {
+            return ResponseEntity.ok(ActionResponse.from(executionService.execute(agentId, actionId), objectMapper));
+        } catch (ActionExecutionStateService.ActionNotFoundException e) {
+            return ResponseEntity.notFound().build();
+        } catch (ActionExecutionStateService.ActionStateConflictException | ObjectOptimisticLockingFailureException e) {
+            return ResponseEntity.status(409).body(Map.of(
+                    "error", Map.of("code", "ACTION_STATE_CONFLICT", "message", e.getMessage())));
+        }
+    }
+
+    @GetMapping("/{actionId}/events")
+    public ResponseEntity<?> events(
+            @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
+            @PathVariable String actionId) {
+        if (actionService.find(agentId, actionId).isEmpty()) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(executionState.events(agentId, actionId).stream()
+                .map(event -> ActionEventResponse.from(event, objectMapper)).toList());
     }
 }
