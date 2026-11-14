@@ -71,3 +71,34 @@ class ActionEvent:
             details=value.get("details"),
             created_at=value.get("createdAt"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class TraceSpan:
+    trace_id: str
+    span_id: str
+    parent_span_id: str | None
+    run_id: str | None
+    name: str
+    span_kind: str
+    status: str
+    started_at: str
+    ended_at: str | None
+    duration_ms: int | None
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    usage_source: str
+    attributes: dict[str, Any] | None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> TraceSpan:
+        return cls(
+            trace_id=value["traceId"], span_id=value["spanId"],
+            parent_span_id=value.get("parentSpanId"), run_id=value.get("runId"),
+            name=value["name"], span_kind=value["spanKind"], status=value["status"],
+            started_at=value["startedAt"], ended_at=value.get("endedAt"),
+            duration_ms=value.get("durationMs"), input_tokens=value.get("inputTokens"),
+            output_tokens=value.get("outputTokens"), total_tokens=value.get("totalTokens"),
+            usage_source=value["usageSource"], attributes=value.get("attributes"),
+        )
