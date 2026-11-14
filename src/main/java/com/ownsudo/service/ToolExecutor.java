@@ -134,11 +134,8 @@ public class ToolExecutor {
                 result.put("rows", safeRows.size() > 50 ? safeRows.subList(0, 50) : safeRows);
                 return result;
             } else {
-                Map<String, Object> result = new LinkedHashMap<>();
-                result.put("querySql", sql);
-                result.put("status", "SUCCESS");
-                result.put("message", "只读安全校验通过，数据库环境就绪");
-                return result;
+                throw new IllegalStateException(
+                        "Database access is unavailable: JdbcTemplate is not configured");
             }
         });
 
