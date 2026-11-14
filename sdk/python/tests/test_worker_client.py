@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from ownagent import OwnAgentClient
+from ownagent import OwnAgentClient, OwnAgentTimeoutError
 
 
 def test_register_tool_uses_separate_developer_key() -> None:
@@ -108,7 +108,7 @@ def test_wait_for_terminal_times_out_without_retrying_execution() -> None:
     with (
         OwnAgentClient("http://localhost:8080", "agent-key",
                        transport=httpx.MockTransport(handler)) as client,
-        pytest.raises(Exception, match="Stopped waiting"),
+        pytest.raises(OwnAgentTimeoutError, match="Stopped waiting"),
     ):
         client.wait_for_terminal("act-123", timeout=0.02, poll_interval=0.01)
 
