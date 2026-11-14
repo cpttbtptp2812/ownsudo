@@ -1360,94 +1360,25 @@ public class AgentPlatformController {
     // ==============================================================================
 
     @GetMapping("/approval/tickets")
-    public List<com.ownsudo.entity.ApprovalTicket> getAllApprovalTickets() {
-        if (approvalTicketRepository == null) return Collections.emptyList();
-        return approvalTicketRepository.findAll();
+    public ResponseEntity<?> getAllApprovalTickets(
+            @RequestHeader(name = "X-OwnAgent-Approver-Key", required = false) String approverKey) {
+        if (!approvalAuthorizationService.isAuthorized(approverKey)) {
+            return ResponseEntity.status(403).body(Map.of("error", "Approver authentication required"));
+        }
+        if (approvalTicketRepository == null) return ResponseEntity.ok(Collections.emptyList());
+        return ResponseEntity.ok(approvalTicketRepository.findAll());
     }
 
+    /**
+     * Legacy approval endpoint disabled: it executed SQL text stored in an approval ticket
+     * directly through JdbcTemplate. Approval must never be equivalent to arbitrary SQL execution.
+     */
     @PostMapping("/approval/decide")
-    public ResponseEntity<Map<String, Object>> decideApproval(@RequestBody Map<String, String> body) {
-        if (approvalTicketRepository == null) {
-            return ResponseEntity.status(503).body(Map.of("error", "审批仓储组件未就绪"));
-        }
-
-        String ticketId = body.get("ticketId");
-        String action = body.getOrDefault("action", "REJECT"); // APPROVE or REJECT
-        String approver = body.getOrDefault("approver", "系统管理员");
-
-        Optional<com.ownsudo.entity.ApprovalTicket> opt = approvalTicketRepository.findById(ticketId);
-        if (opt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-
-        com.ownsudo.entity.ApprovalTicket ticket = opt.get();
-        if (!"PENDING".equals(ticket.getStatus())) {
-            return ResponseEntity.badRequest().body(Map.of("error", "该审批单已决断，当前状态为: " + ticket.getStatus()));
-        }
-
-        Map<String, Object> resp = new LinkedHashMap<>();
-        if ("APPROVE".equalsIgnoreCase(action)) {
-            ticket.setStatus("APPROVED");
-            ticket.setOperatorId(approver);
-            ticket.setDecidedAt(LocalDateTime.now());
-
-            // 真实调用 JDBC 执行被拦截的写操作 SQL！
-            int affected = 0;
-            try {
-                if (jdbcTemplate != null && ticket.getOperationSummary() != null) {
-                    affected = jdbcTemplate.update(ticket.getOperationSummary());
-                }
-                resp.put("affectedRows", affected);
-                resp.put("executedSql", ticket.getOperationSummary());
-                resp.put("status", "APPROVED");
-                resp.put("message", "管理员审批通过：已安全执行数据变更，受影响行数: " + affected);
-            } catch (Exception e) {
-                resp.put("status", "EXECUTION_FAILED");
-                resp.put("error", "执行数据变更异常: " + e.getMessage());
-            }
-        } else {
-            ticket.setStatus("REJECTED");
-            ticket.setOperatorId(approver);
-            ticket.setDecidedAt(LocalDateTime.now());
-            resp.put("status", "REJECTED");
-            resp.put("message", "管理员审批驳回：变更操作已被安全阻断并归档");
-        }
-
-        approvalTicketRepository.save(ticket);
-
-        // 同步更新消息表中的 approvalTicketJson，确保刷新页面后审批状态永久保持已审批，不再回显为待审批
-        try {
-            List<ChatMessageEntity> allMsgs = messageRepository.findAll();
-            for (ChatMessageEntity m : allMsgs) {
-                if (m.getApprovalTicketJson() != null && m.getApprovalTicketJson().contains(ticketId)) {
-                    Map<String, Object> tMap = objectMapper.readValue(m.getApprovalTicketJson(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-                    tMap.put("status", ticket.getStatus());
-                    tMap.put("operatorId", approver);
-                    tMap.put("decidedAt", LocalDateTime.now().toString());
-                    if ("APPROVED".equals(ticket.getStatus())) {
-                        tMap.put("affectedRows", resp.get("affectedRows"));
-                    }
-                    m.setApprovalTicketJson(objectMapper.writeValueAsString(tMap));
-                    messageRepository.save(m);
-                }
-            }
-        } catch (Exception ignored) {}
-
-        // 记入全链路安全审计日志
-        AuditLogEntity audit = new AuditLogEntity();
-        audit.setId("audit-" + UUID.randomUUID().toString().substring(0, 8));
-        audit.setTime(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-        audit.setAgentName("安全审批控制台");
-        audit.setEventType("APPROVAL_" + ticket.getStatus());
-        audit.setToolName(ticket.getNodeId());
-        audit.setParameters("ticketId=" + ticketId + ", sql=" + ticket.getOperationSummary());
-        audit.setModel(approver);
-        audit.setStatus(ticket.getStatus());
-        audit.setIsRealUsage(false);
-        auditLogRepository.save(audit);
-
-        resp.put("ticketId", ticketId);
-        return ResponseEntity.ok(resp);
+    public ResponseEntity<Map<String, Object>> decideApproval(@RequestBody(required = false) Map<String, String> body) {
+        return ResponseEntity.status(410).body(Map.of(
+                "error", "LEGACY_APPROVAL_DISABLED",
+                "message", "Direct SQL execution from approval tickets is disabled. Use the authenticated workflow approval API and a registered, policy-controlled tool."
+        ));
     }
 
     // ══════════════ 多模型故障转移 (Failover) 断路器与演练管控 ══════════════
