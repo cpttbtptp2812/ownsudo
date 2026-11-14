@@ -253,3 +253,26 @@ class OwnAgentClient:
             return None
         return response.json()
 
+
+
+    def create_trace_span(self, span: dict[str, Any]) -> dict[str, Any]:
+        """Persist one span. Token counts must come from provider-reported usage."""
+        required = ("trace_id", "span_id", "name", "started_at")
+        missing = [key for key in required if not span.get(key)]
+        if missing:
+            raise ValueError(f"trace span is missing required fields: {', '.join(missing)}")
+        body = {
+            "traceId": span["trace_id"], "spanId": span["span_id"],
+            "parentSpanId": span.get("parent_span_id"), "runId": span.get("run_id"),
+            "name": span["name"], "spanKind": span.get("span_kind", "INTERNAL"),
+            "status": span.get("status", "UNSET"), "startedAt": span["started_at"],
+            "endedAt": span.get("ended_at"), "inputTokens": span.get("input_tokens"),
+            "outputTokens": span.get("output_tokens"), "totalTokens": span.get("total_tokens"),
+            "usageSource": span.get("usage_source", "MISSING"), "attributes": span.get("attributes"),
+        }
+        return self._request("POST", "/api/v1/traces/spans", json=body)
+
+    def get_trace_spans(self, trace_id: str) -> list[dict[str, Any]]:
+        """Return spans in start-time order for the authenticated Agent."""
+        self._require_id(trace_id)
+        return self._request("GET", f"/api/v1/traces/{trace_id}/spans")
