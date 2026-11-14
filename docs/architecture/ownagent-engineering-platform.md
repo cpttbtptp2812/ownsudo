@@ -61,7 +61,9 @@ The current feature branch contains:
 - Heartbeat lease renewal while a synchronous handler is active. Renewal requires the same token and an unexpired lease; an expired lease cannot be resurrected.
 - Configurable handler timeout. Timed-out or interrupted executions become UNKNOWN, clear the active lease, and emit `ACTION_EXECUTION_UNKNOWN`.
 - Scheduled stale-run recovery: expired RUNNING Actions become UNKNOWN and require reconciliation; they are never automatically requeued.
-- Agent-scoped Action detail and event APIs.\n- An independently installable Python SDK package (`sdk/python`) for create/execute/get/list/wait/events, with explicit API errors and no automatic execution retries.
+- Agent-scoped Action detail and event APIs.\n- An independently installable Python SDK package (`sdk/python`) for Action APIs, tool metadata registration, and a first Local Worker implementation.
+- Worker claim/heartbeat/complete/fail/unknown endpoints, all scoped to the authenticated Agent identity.
+- Local Worker executes only Python callables explicitly registered in the Worker process; it never downloads code from the server.
 
 The demonstration handlers are intentionally deterministic and local. They prove the runtime lifecycle without enabling arbitrary shell, SQL, network, or filesystem execution.
 
@@ -99,12 +101,17 @@ A handler that is not installed fails explicitly with `TOOL_HANDLER_NOT_FOUND`; 
 - `GET /api/v1/actions/{id}/events` — fetch persisted lifecycle events.
 - `POST /api/v1/tools` — register tool metadata (requires Agent key and developer tool-admin key).
 - `GET /api/v1/tools` — list the authenticated Agent's tool metadata.
+- `POST /api/v1/worker/actions/claim` — claim the oldest ALLOW/READY Action matching installed local tool names.
+- `POST /api/v1/worker/actions/{id}/heartbeat` — renew the active Worker lease.
+- `POST /api/v1/worker/actions/{id}/complete` — persist Worker output.
+- `POST /api/v1/worker/actions/{id}/fail` — persist an explicitly known failure.
+- `POST /api/v1/worker/actions/{id}/unknown` — persist an uncertain side-effect outcome.
 
 All `/api/v1/**` requests require an Agent Bearer API key. Tool registration additionally requires `X-OwnAgent-Tool-Admin-Key`.
 
 ## Next milestones
 
-1. **Developer execution:** Local Worker protocol, custom Python handlers and approval-to-execution flow. The synchronous REST Python SDK exists as an early developer preview.
+1. **Developer execution:** First Local Worker protocol and custom Python handlers are implemented as an early preview. Next: approval-to-execution flow, independent Worker enrollment credentials and OS-level sandboxing.
 2. **Runtime hardening:** worker leases, cancellation, manual reconciliation workflow, safe retry semantics and outbox-based worker dispatch.
 3. **Observability:** span model, parent-child relationships, LLM call metadata, redaction, streaming events and trace visualization.
 4. **Evaluation:** versioned datasets, deterministic evaluators, experiment runs, baseline comparison and regression gates.
