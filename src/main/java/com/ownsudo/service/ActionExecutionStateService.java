@@ -35,6 +35,24 @@ public class ActionExecutionStateService {
     public ActionEntity claim(String agentId, String actionId) {
         ActionEntity action = actions.findByIdAndAgentId(actionId, agentId)
                 .orElseThrow(() -> new ActionNotFoundException("Action was not found"));
+        return claimAction(action);
+    }
+
+    /**
+     * Atomically claims the oldest READY Action whose tool is installed by this Worker.
+     * The repository query takes a pessimistic row lock so two Workers cannot claim the same row.
+     */
+    @Transactional
+    public Optional<ActionEntity> claimNext(String agentId, List<String> supportedTools) {
+        if (supportedTools == null || supportedTools.isEmpty()) return Optional.empty();
+        List<String> safeTools = supportedTools.stream().filter(name -> name != null
+                && name.matches("[A-Za-z][A-Za-z0-9_.:-]{0,127}")).distinct().limit(100).toList();
+        if (safeTools.isEmpty()) return Optional.empty();
+        return actions.findFirstByAgentIdAndDecisionAndStatusAndToolNameInOrderByCreatedAtAsc(
+                agentId, "ALLOW", "READY", safeTools).map(this::claimAction);
+    }
+
+    private ActionEntity claimAction(ActionEntity action) {
         if (!"ALLOW".equals(action.getDecision()) || !"READY".equals(action.getStatus())) {
             throw new ActionStateConflictException("Only Actions with decision ALLOW and status READY can be executed");
         }
@@ -48,8 +66,9 @@ public class ActionExecutionStateService {
         action.setLeaseToken(UUID.randomUUID().toString());
         action.setLeaseUntil(now.plusSeconds(leaseSeconds));
         ActionEntity saved = actions.saveAndFlush(action);
-        appendEvent(agentId, actionId, "ACTION_STARTED", Map.of(
-                "attempt", saved.getAttemptCount(), "leaseUntil", saved.getLeaseUntil().toString()));
+        appendEvent(saved.getAgentId(), saved.getId(), "ACTION_STARTED", Map.of(
+                "attempt", saved.getAttemptCount(), "leaseUntil", saved.getLeaseUntil().toString(),
+                "executionMode", "LOCAL_WORKER"));
         return saved;
     }
 

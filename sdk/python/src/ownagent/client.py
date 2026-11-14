@@ -21,12 +21,14 @@ class OwnAgentClient:
         api_key: str,
         *,
         timeout: float = 15.0,
+        tool_admin_api_key: str | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         if not base_url.strip():
             raise ValueError("base_url must not be empty")
         if not api_key.strip():
             raise ValueError("api_key must not be empty")
+        self._tool_admin_api_key = tool_admin_api_key
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
@@ -42,6 +44,33 @@ class OwnAgentClient:
 
     def close(self) -> None:
         self._client.close()
+
+    def register_tool(
+        self,
+        tool_name: str,
+        description: str,
+        input_schema: dict[str, Any],
+        *,
+        risk_level: str = "LOW",
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        """Register tool metadata. Requires the separate developer Tool Admin key."""
+        if not self._tool_admin_api_key:
+            raise ValueError("tool_admin_api_key is required to register tool metadata")
+        if not tool_name.strip() or not description.strip():
+            raise ValueError("tool_name and description must not be empty")
+        return self._request(
+            "POST",
+            "/api/v1/tools",
+            headers={"X-OwnAgent-Tool-Admin-Key": self._tool_admin_api_key},
+            json={
+                "toolName": tool_name,
+                "description": description,
+                "inputSchema": input_schema,
+                "riskLevel": risk_level,
+                "enabled": enabled,
+            },
+        )
 
     def create_action(
         self,
@@ -109,6 +138,58 @@ class OwnAgentClient:
                     f"Stopped waiting for Action {action_id}; its remote execution may continue"
                 )
             time.sleep(min(poll_interval, remaining))
+
+    def claim_worker_action(self, tool_names: list[str]) -> dict[str, Any] | None:
+        """Claim one READY Action for a locally installed tool; returns None when idle."""
+        if not tool_names or len(tool_names) > 100:
+            raise ValueError("tool_names must contain between 1 and 100 names")
+        result = self._request(
+            "POST", "/api/v1/worker/actions/claim", json={"toolNames": tool_names}
+        )
+        return result if isinstance(result, dict) else None
+
+    def heartbeat_worker_action(self, action_id: str, lease_token: str) -> dict[str, Any]:
+        self._require_id(action_id)
+        return self._request(
+            "POST", f"/api/v1/worker/actions/{action_id}/heartbeat",
+            json={"leaseToken": lease_token},
+        )
+
+    def complete_worker_action(
+        self, action_id: str, lease_token: str, output: dict[str, Any]
+    ) -> dict[str, Any]:
+        self._require_id(action_id)
+        return self._request(
+            "POST", f"/api/v1/worker/actions/{action_id}/complete",
+            json={"leaseToken": lease_token, "output": output},
+        )
+
+    def fail_worker_action(
+        self, action_id: str, lease_token: str, error_code: str, error_message: str
+    ) -> dict[str, Any]:
+        self._require_id(action_id)
+        return self._request(
+            "POST", f"/api/v1/worker/actions/{action_id}/fail",
+            json={
+                "leaseToken": lease_token,
+                "errorCode": error_code,
+                "errorMessage": error_message,
+            },
+        )
+
+    def mark_worker_action_unknown(
+        self, action_id: str, lease_token: str, error_code: str, error_message: str
+    ) -> dict[str, Any]:
+        """Record uncertainty when a local handler may have caused a partial side effect."""
+        self._require_id(action_id)
+        return self._request(
+            "POST", f"/api/v1/worker/actions/{action_id}/unknown",
+            json={
+                "leaseToken": lease_token,
+                "errorCode": error_code,
+                "errorMessage": error_message,
+            },
+        )
 
     @staticmethod
     def _require_id(action_id: str) -> None:
