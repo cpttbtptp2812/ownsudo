@@ -20,23 +20,26 @@ public class ActionExecutionService {
     }
 
     /**
-     * Executes only a persisted, policy-approved Action through an installed server-side handler.
-     * Handler execution happens outside the database transaction; state transitions are persisted separately.
+     * Executes an allowlisted handler outside the state transaction.
+     * The lease token prevents a stale executor from overwriting a recovered Action.
      */
     public ActionEntity execute(String agentId, String actionId) {
         ActionEntity claimed = state.claim(agentId, actionId);
+        String leaseToken = claimed.getLeaseToken();
         try {
             Map<String, Object> arguments = mapper.readValue(
                     claimed.getArgumentsJson(), new TypeReference<Map<String, Object>>() {});
             ActionToolHandler handler = handlers.require(claimed.getToolName());
             Map<String, Object> output = handler.execute(arguments);
-            return state.succeed(agentId, actionId, output);
+            return state.succeed(agentId, actionId, leaseToken, output);
         } catch (ActionToolHandlerRegistry.ToolHandlerNotFoundException e) {
-            return state.fail(agentId, actionId, "TOOL_HANDLER_NOT_FOUND", e.getMessage());
+            return state.fail(agentId, actionId, leaseToken, "TOOL_HANDLER_NOT_FOUND", e.getMessage());
         } catch (IllegalArgumentException e) {
-            return state.fail(agentId, actionId, "INVALID_TOOL_ARGUMENTS", e.getMessage());
+            return state.fail(agentId, actionId, leaseToken, "INVALID_TOOL_ARGUMENTS", e.getMessage());
+        } catch (ActionExecutionStateService.ActionStateConflictException e) {
+            throw e;
         } catch (Exception e) {
-            return state.fail(agentId, actionId, "TOOL_EXECUTION_FAILED",
+            return state.fail(agentId, actionId, leaseToken, "TOOL_EXECUTION_FAILED",
                     e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
     }
