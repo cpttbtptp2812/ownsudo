@@ -15,6 +15,7 @@ import java.util.Optional;
 public class AgentApiKeyService {
 
     private static final String KEY_PREFIX = "oa_live_";
+    private static final String KEY_SUFFIX_PATTERN = "[0-9a-fA-F]{64}";
     private final AgentApiKeyRepository repository;
 
     public AgentApiKeyService(AgentApiKeyRepository repository) {
@@ -22,7 +23,8 @@ public class AgentApiKeyService {
     }
 
     public static String hashToken(String token) {
-        if (token == null || !token.startsWith(KEY_PREFIX) || token.length() <= KEY_PREFIX.length()) {
+        if (token == null || !token.startsWith(KEY_PREFIX)
+                || !token.substring(KEY_PREFIX.length()).matches(KEY_SUFFIX_PATTERN)) {
             throw new IllegalArgumentException("Invalid OwnAgent API key format");
         }
         try {
