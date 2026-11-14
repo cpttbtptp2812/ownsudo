@@ -98,6 +98,12 @@ public class ActionApplicationService {
         return actionRepository.findAllByAgentIdOrderByCreatedAtDesc(authenticatedAgentId, PageRequest.of(0, limit));
     }
 
+    @Transactional(readOnly = true)
+    public List<ActionEntity> pendingApprovals(String authenticatedAgentId) {
+        return actionRepository.findAllByAgentIdAndStatusOrderByCreatedAtDesc(
+                authenticatedAgentId, "PENDING_APPROVAL");
+    }
+
     private JsonNode sortJson(JsonNode node) {
         if (node == null || node.isValueNode()) return node;
         if (node.isArray()) {
