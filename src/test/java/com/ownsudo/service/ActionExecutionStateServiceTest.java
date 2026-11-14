@@ -38,6 +38,29 @@ class ActionExecutionStateServiceTest {
     }
 
     @Test
+    void workerClaimsOldestAllowedReadyActionForAnInstalledTool() {
+        ActionEntity action = action("ALLOW", "READY");
+        action.setToolName("demo.echo");
+        when(actions.findFirstByAgentIdAndDecisionAndStatusAndToolNameInOrderByCreatedAtAsc(
+                "agent-a", "ALLOW", "READY", List.of("demo.echo"))).thenReturn(Optional.of(action));
+        when(actions.saveAndFlush(action)).thenReturn(action);
+
+        Optional<ActionEntity> claimed = service.claimNext("agent-a", List.of("demo.echo"));
+
+        assertTrue(claimed.isPresent());
+        assertEquals("RUNNING", claimed.get().getStatus());
+        assertNotNull(claimed.get().getLeaseToken());
+        verify(events).save(argThat(event -> "ACTION_STARTED".equals(event.getEventType())
+                && "act-1".equals(event.getActionId())));
+    }
+
+    @Test
+    void workerDoesNotClaimWhenNoToolsAreInstalled() {
+        assertTrue(service.claimNext("agent-a", List.of()).isEmpty());
+        verifyNoInteractions(actions);
+    }
+
+    @Test
     void heartbeatRenewsOnlyTheCurrentUnexpiredLease() {
         ActionEntity running = action("ALLOW", "RUNNING");
         running.setLeaseToken("lease-1");
