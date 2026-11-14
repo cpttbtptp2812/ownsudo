@@ -20,6 +20,14 @@ logging:
     root: INFO
     com.ownsudo: DEBUG
     org.hibernate.SQL: WARN
+
+ownagent:
+  runtime:
+    lease-seconds: ${OWNAGENT_ACTION_LEASE_SECONDS:300}
+    heartbeat-interval-ms: ${OWNAGENT_ACTION_HEARTBEAT_INTERVAL_MS:10000}
+    handler-timeout-seconds: ${OWNAGENT_ACTION_TIMEOUT_SECONDS:60}
+    recovery-interval-ms: ${OWNAGENT_ACTION_RECOVERY_INTERVAL_MS:30000}
+
 app:
   security:
     approver-api-key: ${OWNAGENT_APPROVER_API_KEY:}
