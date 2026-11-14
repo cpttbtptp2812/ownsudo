@@ -133,3 +133,29 @@ The Action lifecycle and tool metadata are persisted by OwnAgent. **The model re
 This package currently lives in the backend monorepo under `sdk/python` so it can evolve against the API contract. It is independently installable from source but is not yet published to PyPI.
 
 See `examples/basic_agent.py`, `examples/local_worker.py`, and `examples/demo_agent.py`.
+
+
+## Trace ingestion API
+
+Record spans from your own Agent or framework. Supply provider-reported token usage only:
+
+```python
+client.create_trace_span({
+    "trace_id": trace_id,
+    "span_id": span_id,
+    "parent_span_id": parent_span_id,
+    "run_id": run_id,
+    "name": "chat.completions",
+    "span_kind": "CLIENT",
+    "status": "OK",
+    "started_at": started_at.isoformat(),
+    "ended_at": ended_at.isoformat(),
+    "input_tokens": response.usage.prompt_tokens,
+    "output_tokens": response.usage.completion_tokens,
+    "usage_source": "PROVIDER",
+    "attributes": {"provider": "openai", "model": response.model},
+})
+spans = client.get_trace_spans(trace_id)
+```
+
+Use `usage_source="MISSING"` when the provider does not return usage. Do not put prompts, completions, credentials, or personal data in span attributes. The backend stores span metadata and provider token counts; it does not infer or fabricate usage. Action lifecycle events remain available through the existing Action events endpoint and will be correlated into the waterfall in a later UI integration.
