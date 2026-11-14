@@ -252,3 +252,4 @@ class OwnAgentClient:
         if response.status_code == 204 or not response.content:
             return None
         return response.json()
+
