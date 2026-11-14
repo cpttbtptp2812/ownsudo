@@ -5,6 +5,7 @@ import com.ownsudo.entity.ActionEntity;
 import org.junit.jupiter.api.Test;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class ActionExecutionServiceTest {
@@ -18,7 +19,7 @@ class ActionExecutionServiceTest {
         ActionEntity succeeded = new ActionEntity();
         succeeded.setId("act-1");
         succeeded.setStatus("SUCCEEDED");
-        when(state.succeed(eq("agent-a"), eq("act-1"), anyMap())).thenReturn(succeeded);
+        when(state.succeed(eq("agent-a"), eq("act-1"), eq("lease-1"), anyMap())).thenReturn(succeeded);
 
         ActionToolHandlerRegistry registry = new ActionToolHandlerRegistry(java.util.List.of(new DemoEchoToolHandler()));
         ActionExecutionService service = new ActionExecutionService(state, registry, mapper);
@@ -26,8 +27,8 @@ class ActionExecutionServiceTest {
 
         assertEquals("SUCCEEDED", result.getStatus());
         verify(state).claim("agent-a", "act-1");
-        verify(state).succeed("agent-a", "act-1", Map.of("message", "hello", "characterCount", 5));
-        verify(state, never()).fail(anyString(), anyString(), anyString(), anyString());
+        verify(state).succeed("agent-a", "act-1", "lease-1", Map.of("message", "hello", "characterCount", 5));
+        verify(state, never()).fail(anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -35,7 +36,7 @@ class ActionExecutionServiceTest {
         when(state.claim("agent-a", "act-2")).thenReturn(readyAction("uninstalled.tool", "{}"));
         ActionEntity failed = new ActionEntity();
         failed.setStatus("FAILED");
-        when(state.fail(eq("agent-a"), eq("act-2"), eq("TOOL_HANDLER_NOT_FOUND"), contains("uninstalled.tool")))
+        when(state.fail(eq("agent-a"), eq("act-2"), eq("lease-1"), eq("TOOL_HANDLER_NOT_FOUND"), contains("uninstalled.tool")))
                 .thenReturn(failed);
 
         ActionExecutionService service = new ActionExecutionService(state,
@@ -43,8 +44,8 @@ class ActionExecutionServiceTest {
         ActionEntity result = service.execute("agent-a", "act-2");
 
         assertEquals("FAILED", result.getStatus());
-        verify(state, never()).succeed(anyString(), anyString(), anyMap());
-        verify(state).fail(eq("agent-a"), eq("act-2"), eq("TOOL_HANDLER_NOT_FOUND"), anyString());
+        verify(state, never()).succeed(anyString(), anyString(), anyString(), anyMap());
+        verify(state).fail(eq("agent-a"), eq("act-2"), eq("lease-1"), eq("TOOL_HANDLER_NOT_FOUND"), anyString());
     }
 
     @Test
@@ -52,14 +53,14 @@ class ActionExecutionServiceTest {
         when(state.claim("agent-a", "act-3")).thenReturn(readyAction("text.transform", "{\"text\":\"hello\",\"operation\":\"explode\"}"));
         ActionEntity failed = new ActionEntity();
         failed.setStatus("FAILED");
-        when(state.fail(eq("agent-a"), eq("act-3"), eq("INVALID_TOOL_ARGUMENTS"), anyString())).thenReturn(failed);
+        when(state.fail(eq("agent-a"), eq("act-3"), eq("lease-1"), eq("INVALID_TOOL_ARGUMENTS"), anyString())).thenReturn(failed);
 
         ActionExecutionService service = new ActionExecutionService(state,
                 new ActionToolHandlerRegistry(java.util.List.of(new TextTransformToolHandler())), mapper);
         ActionEntity result = service.execute("agent-a", "act-3");
 
         assertEquals("FAILED", result.getStatus());
-        verify(state, never()).succeed(anyString(), anyString(), anyMap());
+        verify(state, never()).succeed(anyString(), anyString(), anyString(), anyMap());
     }
 
     private ActionEntity readyAction(String tool, String arguments) {
@@ -70,6 +71,7 @@ class ActionExecutionServiceTest {
         action.setArgumentsJson(arguments);
         action.setDecision("ALLOW");
         action.setStatus("READY");
+        action.setLeaseToken("lease-1");
         return action;
     }
 }
