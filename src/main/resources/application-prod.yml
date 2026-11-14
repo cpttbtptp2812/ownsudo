@@ -1,4 +1,8 @@
 spring:
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
   datasource:
     url: jdbc:mysql://${DB_HOST:agent-mysql}:${DB_PORT:3306}/${DB_NAME:agent_db}?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&characterEncoding=utf8
     username: ${DB_USER}
@@ -19,7 +23,3 @@ app:
     bootstrap-agent-id: ${OWNAGENT_BOOTSTRAP_AGENT_ID:}
     bootstrap-agent-api-key: ${OWNAGENT_BOOTSTRAP_AGENT_API_KEY:}
 
-  flyway:
-    enabled: true
-    baseline-on-migrate: true
-    baseline-version: 0
