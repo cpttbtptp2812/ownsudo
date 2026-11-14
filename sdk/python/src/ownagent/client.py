@@ -34,7 +34,7 @@ class OwnAgentClient:
             transport=transport,
         )
 
-    def __enter__(self) -> "OwnAgentClient":
+    def __enter__(self) -> OwnAgentClient:
         return self
 
     def __exit__(self, *_: object) -> None:
