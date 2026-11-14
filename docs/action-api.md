@@ -1,59 +1,73 @@
-# OwnAgent Action API (initial integration slice)
+# OwnAgent Action API
 
-The API accepts an action request from an authenticated Agent, resolves an Agent-owned registered tool, validates its declared input schema, evaluates a deterministic policy, persists the decision, and exposes scoped retrieval. Tool execution is not yet implemented.
-
-All endpoints are under `/api/v1` and require:
+All `/api/v1` endpoints require an Agent API key:
 
 ```http
 Authorization: Bearer oa_live_<64 hexadecimal characters>
 ```
 
-The authenticated Agent ID is resolved by the API-key filter. The request body cannot assign or override the owner.
+The Agent ID is resolved by the authentication filter; clients cannot choose the owner in request bodies or query parameters.
 
-## Create an Action
+## Register a tool
 
-```http
-POST /api/v1/actions
-Content-Type: application/json
-Authorization: Bearer $OWNAGENT_AGENT_API_KEY
-```
+`POST /api/v1/tools` creates or updates a tool definition for the authenticated Agent. `GET /api/v1/tools` lists only that Agent's tools.
 
 ```json
 {
   "toolName": "file.write",
-  "arguments": {
-    "path": "/tmp/report.txt",
-    "content": "hello"
-  },
-  "metadata": {
-    "source": "my-agent",
-    "conversation_id": "conv-123"
-  },
+  "description": "Write a text file in the agent workspace",
+  "riskLevel": "HIGH",
+  "enabled": true,
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string" },
+      "content": { "type": "string" }
+    },
+    "required": ["path", "content"],
+    "additionalProperties": false
+  }
+}
+```
+
+Supported schema validation currently covers object properties, required fields, primitive JSON types, and additionalProperties. It is deliberately a documented subset, not a complete JSON Schema implementation.
+
+Risk levels: `READ_ONLY`, `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`.
+
+## Create an Action
+
+`POST /api/v1/actions`
+
+```json
+{
+  "toolName": "file.write",
+  "arguments": { "path": "/tmp/report.txt", "content": "hello" },
+  "metadata": { "source": "my-agent" },
   "idempotencyKey": "write-report-2026-11-14-001"
 }
 ```
 
-A newly persisted request returns HTTP 201. Its initial status and decision are derived from the registered tool risk policy. Repeating the same key for the same Agent and same `toolName` + `arguments` returns the existing Action with HTTP 200. Object key order is normalized before fingerprinting. Reusing the same Agent-scoped key with different operation content returns HTTP 409. Metadata is stored but does not change the operation fingerprint.
+The tool must be registered under the authenticated Agent. Arguments are validated against its schema before policy evaluation is persisted.
 
-The database also enforces a unique constraint on `(agent_id, idempotency_key)`. A concurrent first-write race may return HTTP 409; retry the same key to retrieve the winning Action.
+## Initial policy
 
-## Retrieve Actions
+| Tool risk / state | Decision | Action status |
+|---|---|---|
+| Not registered | DENY | DENIED |
+| Disabled | DENY | DENIED |
+| READ_ONLY / LOW | ALLOW | READY |
+| MEDIUM / HIGH / CRITICAL | REQUIRE_APPROVAL | PENDING_APPROVAL |
 
-- `GET /api/v1/actions?limit=50` lists only Actions belonging to the authenticated Agent. The limit is clamped to 1–100.
-- `GET /api/v1/actions/{actionId}` returns the Action only when it belongs to the authenticated Agent. A foreign or missing Action returns HTTP 404.
+The policy is deterministic and intentionally small. The tool risk level is developer-configured; deployments should govern who can register or change tool definitions. A `READY` Action means policy allowed it, not that execution occurred. `PENDING_APPROVAL` is not executable until the approval lifecycle is implemented.
 
-The repository methods include the authenticated `agentId` in every lookup. The owner is never taken from query parameters or the request body.
+## Idempotency and isolation
 
-## Current lifecycle boundary
+The idempotency key is unique per Agent. Same key + same toolName/arguments returns the existing Action; same key + different operation returns HTTP 409. Object key order is normalized. Every Action lookup and Tool listing is scoped by authenticated Agent ID.
 
-This is an Action persistence and idempotency API, not an execution endpoint. It does not yet:
-- evaluate policies or derive risk scores;
-- request or process human approval;
-- execute tools or schedule workers;
-- append lifecycle events or verify postconditions.
+## Not implemented yet
 
-Do not interpret `PENDING_POLICY` as a queued/running action or as evidence that a tool ran. Those lifecycle stages are the next implementation steps.
+This slice does not execute tools, schedule workers, process approvals, append Action events, or verify postconditions. The next product step is the developer-facing Tools and Actions console, followed by approval and runtime lifecycle work.
 
 ## Database
 
-Production uses Flyway migrations `V2__create_agent_action.sql` and `V3__create_agent_tool_registry.sql`. The default/local configuration leaves Flyway disabled and uses the project's existing local Hibernate schema behavior. Production Flyway baseline is configured separately in `application-prod.yml`; back up and review an existing database before deployment.
+Production migrations include `V1__create_agent_api_key.sql`, `V2__create_agent_action.sql`, and `V3__create_agent_tool_registry.sql`. Review the production Flyway configuration and back up existing data before deployment.
