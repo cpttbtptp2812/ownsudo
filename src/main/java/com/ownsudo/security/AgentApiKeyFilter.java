@@ -33,7 +33,8 @@ public class AgentApiKeyFilter extends OncePerRequestFilter {
 
         String authorization = request.getHeader("Authorization");
         String token = null;
-        if (authorization != null && authorization.startsWith("Bearer ")) {
+        if (authorization != null && authorization.length() > 7
+                && authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
             token = authorization.substring(7).trim();
         }
 
