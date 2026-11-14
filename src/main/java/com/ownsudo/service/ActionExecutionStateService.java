@@ -123,7 +123,8 @@ public class ActionExecutionStateService {
         ActionEntity action = actions.findByIdAndAgentId(actionId, agentId)
                 .orElseThrow(() -> new ActionNotFoundException("Action was not found"));
         if (!"RUNNING".equals(action.getStatus()) || leaseToken == null
-                || !leaseToken.equals(action.getLeaseToken())) {
+                || !leaseToken.equals(action.getLeaseToken())
+                || action.getLeaseUntil() == null || !action.getLeaseUntil().isAfter(LocalDateTime.now())) {
             throw new ActionStateConflictException("Action execution lease is no longer active");
         }
         return action;
