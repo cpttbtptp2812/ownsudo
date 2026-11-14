@@ -102,6 +102,11 @@ public class TraceSpanService {
     }
 
     @Transactional(readOnly = true)
+    public List<TraceSpanEntity> recentSpans(String agentId) {
+        return repository.findTop500ByAgentIdOrderByCreatedAtDesc(agentId);
+    }
+
+    @Transactional(readOnly = true)
     public List<TraceSpanEntity> list(String agentId, String traceId) {
         return repository.findAllByAgentIdAndTraceIdOrderByStartedAtAsc(agentId, traceId);
     }
