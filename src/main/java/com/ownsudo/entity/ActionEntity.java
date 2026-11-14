@@ -42,6 +42,28 @@ public class ActionEntity {
     @Column(name = "risk_level", nullable = false, length = 32)
     private String riskLevel;
 
+    @Column(name = "output_json", columnDefinition = "LONGTEXT")
+    private String outputJson;
+
+    @Column(name = "error_code", length = 64)
+    private String errorCode;
+
+    @Column(name = "error_message", length = 1000)
+    private String errorMessage;
+
+    @Column(name = "attempt_count", nullable = false)
+    private int attemptCount;
+
+    @Column(name = "started_at")
+    private LocalDateTime startedAt;
+
+    @Column(name = "completed_at")
+    private LocalDateTime completedAt;
+
+    @Version
+    @Column(nullable = false)
+    private long version;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -56,9 +78,7 @@ public class ActionEntity {
     }
 
     @PreUpdate
-    public void preUpdate() {
-        updatedAt = LocalDateTime.now();
-    }
+    public void preUpdate() { updatedAt = LocalDateTime.now(); }
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
@@ -80,6 +100,19 @@ public class ActionEntity {
     public void setDecision(String decision) { this.decision = decision; }
     public String getRiskLevel() { return riskLevel; }
     public void setRiskLevel(String riskLevel) { this.riskLevel = riskLevel; }
+    public String getOutputJson() { return outputJson; }
+    public void setOutputJson(String outputJson) { this.outputJson = outputJson; }
+    public String getErrorCode() { return errorCode; }
+    public void setErrorCode(String errorCode) { this.errorCode = errorCode; }
+    public String getErrorMessage() { return errorMessage; }
+    public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+    public int getAttemptCount() { return attemptCount; }
+    public void setAttemptCount(int attemptCount) { this.attemptCount = attemptCount; }
+    public LocalDateTime getStartedAt() { return startedAt; }
+    public void setStartedAt(LocalDateTime startedAt) { this.startedAt = startedAt; }
+    public LocalDateTime getCompletedAt() { return completedAt; }
+    public void setCompletedAt(LocalDateTime completedAt) { this.completedAt = completedAt; }
+    public long getVersion() { return version; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
