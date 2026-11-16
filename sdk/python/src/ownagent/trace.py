@@ -10,7 +10,7 @@ from uuid import uuid4
 from .client import OwnAgentClient
 
 logger = logging.getLogger(__name__)
-_active_span: ContextVar[tuple[str, str] | None] = ContextVar("ownagent_active_span", default=None)
+_active_span: ContextVar[tuple[str, str, int] | None] = ContextVar("ownagent_active_span", default=None)
 
 
 def _timestamp() -> str:
@@ -48,7 +48,7 @@ class TraceSpan:
         self.span_id = span_id or uuid4().hex
         active = _active_span.get()
         self.parent_span_id = parent_span_id or (
-            active[1] if active and active[0] == trace_id else None
+            active[1] if active and active[0] == trace_id and active[2] == id(client) else None
         )
         self.name = name
         self.span_kind = span_kind
@@ -59,7 +59,7 @@ class TraceSpan:
         self.output_tokens: int | None = None
         self.total_tokens: int | None = None
         self.usage_source = "MISSING"
-        self._context_token: Token[tuple[str, str] | None] | None = None
+        self._context_token: Token[tuple[str, str, int] | None] | None = None
 
     def set_usage(
         self,
