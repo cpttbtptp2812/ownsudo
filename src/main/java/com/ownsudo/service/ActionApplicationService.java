@@ -1,5 +1,6 @@
 package com.ownsudo.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -87,6 +88,44 @@ public class ActionApplicationService {
         return new CreateResult(actionRepository.save(action), true);
     }
 
+    /**
+     * Creates a new Action from a known FAILED attempt after an explicit duplicate-side-effect acknowledgement.
+     * UNKNOWN is deliberately not retryable: callers must reconcile the external system first.
+     */
+    @Transactional
+    public CreateResult retryFailed(String authenticatedAgentId, String actionId,
+                                    String newIdempotencyKey, boolean acknowledgePossibleDuplicateSideEffect) {
+        if (!acknowledgePossibleDuplicateSideEffect) {
+            throw new IllegalArgumentException("Explicit acknowledgement of possible duplicate side effects is required");
+        }
+        ActionEntity previous = actionRepository.findByIdAndAgentId(actionId, authenticatedAgentId)
+                .orElseThrow(() -> new ActionNotFoundException("Action was not found"));
+        if (!"FAILED".equals(previous.getStatus())) {
+            throw new ActionStateConflictException(
+                    "Only FAILED Actions can be manually retried. UNKNOWN requires external reconciliation first.");
+        }
+        try {
+            Map<String, Object> arguments = objectMapper.readValue(
+                    previous.getArgumentsJson(), new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> metadata = new HashMap<>();
+            if (previous.getMetadataJson() != null) {
+                Map<String, Object> originalMetadata = objectMapper.readValue(
+                        previous.getMetadataJson(), new TypeReference<Map<String, Object>>() {});
+                if (originalMetadata != null) metadata.putAll(originalMetadata);
+            }
+            metadata.put("retryOf", actionId);
+            metadata.put("retryMode", "MANUAL_ACKNOWLEDGED");
+            CreateActionRequest retry = new CreateActionRequest();
+            retry.setToolName(previous.getToolName());
+            retry.setArguments(arguments);
+            retry.setMetadata(metadata);
+            retry.setIdempotencyKey(newIdempotencyKey);
+            return create(authenticatedAgentId, retry);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("Stored Action payload could not be read", e);
+        }
+    }
+
     @Transactional(readOnly = true)
     public Optional<ActionEntity> find(String authenticatedAgentId, String actionId) {
         return actionRepository.findByIdAndAgentId(actionId, authenticatedAgentId);
@@ -137,6 +176,12 @@ public class ActionApplicationService {
     }
 
     public record CreateResult(ActionEntity action, boolean created) {}
+    public static class ActionNotFoundException extends RuntimeException {
+        public ActionNotFoundException(String message) { super(message); }
+    }
+    public static class ActionStateConflictException extends RuntimeException {
+        public ActionStateConflictException(String message) { super(message); }
+    }
     public static class IdempotencyConflictException extends RuntimeException {
         public IdempotencyConflictException(String message) { super(message); }
     }

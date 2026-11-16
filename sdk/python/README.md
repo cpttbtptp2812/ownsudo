@@ -104,6 +104,7 @@ The Action lifecycle and tool metadata are persisted by OwnAgent. The model requ
 - `list_pending_approvals()`, `approve_action(action_id, reason=None)`, `reject_action(action_id, reason=None)` — require the separate `approver_api_key`
 - `create_action(tool_name, arguments, idempotency_key=..., metadata=None)`
 - `execute_action(action_id)` — sends exactly one server-side execution request; never automatically retried
+- `retry_failed_action(action_id, acknowledge_possible_duplicate_side_effect=True)` — creates a new Action only from a `FAILED` attempt after explicit acknowledgement; `UNKNOWN` is never retryable
 - `get_action(action_id)`
 - `list_actions(limit=50)`
 - `get_events(action_id)`
@@ -111,6 +112,10 @@ The Action lifecycle and tool metadata are persisted by OwnAgent. The model requ
 - `LocalWorker(client, poll_interval=1, heartbeat_interval=15)`
 - `LocalWorker.register(tool_name, handler)`
 - `LocalWorker.run_once()` and `LocalWorker.run_forever(stop_event=None)`
+
+## Manual retry semantics
+
+A manual retry creates a new Action with a fresh idempotency key and re-evaluates the current tool policy. The caller must explicitly acknowledge that a handler reported as FAILED may still have caused a partial external side effect. The server rejects retries for `UNKNOWN`; reconcile the external system before submitting a new Action. High-risk tools may require a new approval.
 
 ## Safety and execution semantics
 

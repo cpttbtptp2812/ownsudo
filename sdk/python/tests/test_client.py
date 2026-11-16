@@ -43,6 +43,23 @@ def test_create_action_sends_bearer_and_idempotency_key() -> None:
     assert action.status == "READY"
 
 
+def test_retry_failed_action_requires_explicit_acknowledgement() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/v1/actions/act-failed/retry"
+        assert request.url.params["confirmPossibleDuplicateSideEffect"] == "true"
+        return httpx.Response(201, json=action_payload("READY"))
+
+    with OwnAgentClient("http://localhost:8080", "test-key",
+                        transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match="acknowledgement"):
+            client.retry_failed_action("act-failed")
+        result = client.retry_failed_action(
+            "act-failed", acknowledge_possible_duplicate_side_effect=True
+        )
+    assert result.status == "READY"
+
+
 def test_execute_action_posts_once_and_returns_succeeded() -> None:
     calls = 0
 
