@@ -97,6 +97,26 @@ class OwnAgentClient:
             body["metadata"] = metadata
         return Action.from_dict(self._request("POST", "/api/v1/actions", json=body))
 
+    def retry_failed_action(
+        self,
+        action_id: str,
+        *,
+        acknowledge_possible_duplicate_side_effect: bool = False,
+    ) -> Action:
+        """Create a new Action from a FAILED attempt after explicit risk acknowledgement.
+
+        UNKNOWN Actions are never retryable through this method; reconcile the
+        external system first. The new Action is re-evaluated by server policy.
+        """
+        self._require_id(action_id)
+        if not acknowledge_possible_duplicate_side_effect:
+            raise ValueError("Explicit acknowledgement of possible duplicate side effects is required")
+        return Action.from_dict(self._request(
+            "POST",
+            f"/api/v1/actions/{action_id}/retry",
+            params={"confirmPossibleDuplicateSideEffect": "true"},
+        ))
+
     def execute_action(self, action_id: str) -> Action:
         """Execute once. Do not blindly retry after a transport error."""
         self._require_id(action_id)
