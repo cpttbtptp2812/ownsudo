@@ -114,8 +114,13 @@ class TraceSpan:
             logger.warning("OwnAgent trace span delivery failed for %s", self.name, exc_info=True)
 
     def __enter__(self) -> TraceSpan:
-        self._context_token = _active_span.set((self.trace_id, self.span_id))
-        self._send("UNSET")
+        self._context_token = _active_span.set((self.trace_id, self.span_id, id(self.client)))
+        try:
+            self._send("UNSET")
+        except Exception:
+            _active_span.reset(self._context_token)
+            self._context_token = None
+            raise
         return self
 
     def __exit__(
