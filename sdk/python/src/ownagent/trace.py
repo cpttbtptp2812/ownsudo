@@ -122,7 +122,7 @@ class TraceSpan:
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
-        traceback: TracebackType | None,
+        traceback: object,
     ) -> bool:
         try:
             if exc is not None:
