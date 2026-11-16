@@ -257,6 +257,27 @@ class OwnAgentClient:
 
 
 
+    def trace_span(
+        self,
+        trace_id: str,
+        name: str,
+        *,
+        run_id: str | None = None,
+        span_id: str | None = None,
+        parent_span_id: str | None = None,
+        span_kind: str = "INTERNAL",
+        attributes: dict[str, Any] | None = None,
+        best_effort: bool = True,
+    ):
+        """Create a context-managed span; nested spans inherit their parent ID."""
+        from .trace import TraceSpan
+
+        return TraceSpan(
+            self, trace_id, name, run_id=run_id, span_id=span_id,
+            parent_span_id=parent_span_id, span_kind=span_kind,
+            attributes=attributes, best_effort=best_effort,
+        )
+
     def create_trace_span(self, span: dict[str, Any]) -> dict[str, Any]:
         """Persist one span. Token counts must come from provider-reported usage."""
         required = ("trace_id", "span_id", "name", "started_at")
@@ -293,6 +314,7 @@ class OwnAgentClient:
                 "GET",
                 f"/api/v1/traces/{trace_id}/events",
                 headers={"Accept": "text/event-stream"},
+                timeout=None,
             ) as response:
                 try:
                     response.raise_for_status()

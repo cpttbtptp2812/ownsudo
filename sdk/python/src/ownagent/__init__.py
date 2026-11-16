@@ -2,6 +2,7 @@
 from .client import OwnAgentClient
 from .errors import OwnAgentAPIError, OwnAgentError, OwnAgentTimeoutError
 from .models import Action, ActionEvent, TraceSpan
+from .trace import TraceSpan as TraceSpanContext
 from .worker import LocalWorker
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "OwnAgentError",
     "OwnAgentTimeoutError",
     "TraceSpan",
+    "TraceSpanContext",
 ]
