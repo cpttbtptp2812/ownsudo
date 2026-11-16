@@ -118,7 +118,12 @@ class TraceSpan:
         self._send("UNSET")
         return self
 
-    def __exit__(\n        self,\n        exc_type: type[BaseException] | None,\n        exc: BaseException | None,\n        traceback: TracebackType | None,\n    ) -> bool:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
         try:
             if exc is not None:
                 self.attributes.setdefault("error_type", exc_type.__name__ if exc_type else "Exception")
