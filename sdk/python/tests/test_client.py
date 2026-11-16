@@ -149,3 +149,26 @@ def test_get_trace_spans_uses_agent_authenticated_api() -> None:
     with OwnAgentClient("http://localhost:8080", "test-key",
                         transport=httpx.MockTransport(handler)) as client:
         assert client.get_trace_spans("trace-123") == []
+
+
+
+def test_stream_trace_events_yields_json_sse_events() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/api/v1/traces/trace-123/events"
+        assert request.headers["Authorization"] == "Bearer test-key"
+        assert request.headers["Accept"] == "text/event-stream"
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text='event: connected\\ndata: {"traceId":"trace-123"}\\n\\n'
+                 'event: trace_span\\nid: span-1\\ndata: {"spanId":"span-1","status":"OK"}\\n\\n',
+        )
+
+    with OwnAgentClient("http://localhost:8080", "test-key",
+                        transport=httpx.MockTransport(handler)) as client:
+        events = list(client.stream_trace_events("trace-123"))
+    assert events == [
+        {"event": "connected", "id": None, "data": {"traceId": "trace-123"}},
+        {"event": "trace_span", "id": "span-1", "data": {"spanId": "span-1", "status": "OK"}},
+    ]
