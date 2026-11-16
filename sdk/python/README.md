@@ -166,12 +166,17 @@ Use `usage_source="MISSING"` when the provider does not return usage. Do not put
 After loading persisted spans with `get_trace_spans(trace_id)`, subscribe to new span updates:
 
 ```python
+from itertools import chain
+
 with OwnAgentClient(base_url, agent_api_key) as client:
+    events = client.stream_trace_events("run-123")
+    first_event = next(events)  # Establish the subscription before reading the snapshot.
     existing = client.get_trace_spans("run-123")
-    for event in client.stream_trace_events("run-123"):
+    # Merge snapshot + stream by (traceId, spanId) to avoid a subscription race.
+    for event in chain([first_event], events):
         if event["event"] == "trace_span":
             span = event["data"]
             print(span["name"], span["status"])
 ```
 
-The stream endpoint is `GET /api/v1/traces/{traceId}/events` and uses the same Agent Bearer key as span ingestion. It emits `connected` when the subscription is established and `trace_span` when a span is accepted. This is a live notification channel, not durable event storage: always load persisted spans first and reconnect/reload after a disconnect. The current server limits each trace to 10 concurrent subscribers and closes streams after 30 minutes.
+The stream endpoint is `GET /api/v1/traces/{traceId}/events` and uses the same Agent Bearer key as span ingestion. It emits `connected` when the subscription is established and `trace_span` when a span is accepted or finalized. To avoid missing an event between snapshot and subscription, establish the stream first, then load the persisted snapshot and deduplicate by span ID. This is a live notification channel, not durable event storage; reconnect and reload after a disconnect. The current server limits each trace to 10 concurrent subscribers and closes streams after 30 minutes. For live progress, ingest an open span with `status="UNSET"` and no `ended_at`, then submit the same span ID with an end time and final `OK` or `ERROR` status. The backend permits this single finalization update; other conflicting updates are rejected.
