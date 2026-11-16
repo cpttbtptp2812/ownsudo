@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import httpx
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "examples"))
-import demo_agent  # noqa: E402
+import demo_agent
 
 
 class TraceUnavailableAgent:
