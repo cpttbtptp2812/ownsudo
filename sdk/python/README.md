@@ -159,3 +159,19 @@ spans = client.get_trace_spans(trace_id)
 ```
 
 Use `usage_source="MISSING"` when the provider does not return usage. Do not put prompts, completions, credentials, or personal data in span attributes. The backend stores span metadata and provider token counts; it does not infer or fabricate usage. Action lifecycle events remain available through the existing Action events endpoint. The example currently emits correlated LLM and Action spans; automatic instrumentation for arbitrary frameworks and a full event-backed waterfall remain future work.
+
+
+## Live trace event stream
+
+After loading persisted spans with `get_trace_spans(trace_id)`, subscribe to new span updates:
+
+```python
+with OwnAgentClient(base_url, agent_api_key) as client:
+    existing = client.get_trace_spans("run-123")
+    for event in client.stream_trace_events("run-123"):
+        if event["event"] == "trace_span":
+            span = event["data"]
+            print(span["name"], span["status"])
+```
+
+The stream endpoint is `GET /api/v1/traces/{traceId}/events` and uses the same Agent Bearer key as span ingestion. It emits `connected` when the subscription is established and `trace_span` when a span is accepted. This is a live notification channel, not durable event storage: always load persisted spans first and reconnect/reload after a disconnect. The current server limits each trace to 10 concurrent subscribers and closes streams after 30 minutes.
