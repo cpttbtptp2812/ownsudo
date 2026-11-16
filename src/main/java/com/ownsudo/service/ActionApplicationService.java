@@ -1,5 +1,6 @@
 package com.ownsudo.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -175,7 +176,13 @@ public class ActionApplicationService {
     }
 
     public record CreateResult(ActionEntity action, boolean created) {}
-    public static class ActionNotFoundException extends RuntimeException {\n        public ActionNotFoundException(String message) { super(message); }\n    }\n    public static class ActionStateConflictException extends RuntimeException {\n        public ActionStateConflictException(String message) { super(message); }\n    }\n    public static class IdempotencyConflictException extends RuntimeException {
+    public static class ActionNotFoundException extends RuntimeException {
+        public ActionNotFoundException(String message) { super(message); }
+    }
+    public static class ActionStateConflictException extends RuntimeException {
+        public ActionStateConflictException(String message) { super(message); }
+    }
+    public static class IdempotencyConflictException extends RuntimeException {
         public IdempotencyConflictException(String message) { super(message); }
     }
 }
