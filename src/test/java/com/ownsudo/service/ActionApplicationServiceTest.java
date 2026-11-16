@@ -112,6 +112,46 @@ class ActionApplicationServiceTest {
         verifyNoInteractions(repository);
     }
 
+    @Test void failedActionCanBeRetriedOnlyWithExplicitDuplicateSideEffectAcknowledgement() throws Exception {
+        allowTool("agent-a");
+        ActionEntity failed = new ActionEntity();
+        failed.setId("act-failed");
+        failed.setAgentId("agent-a");
+        failed.setToolName("file.write");
+        failed.setArgumentsJson("{\"path\":\"/tmp/report.txt\"}");
+        failed.setStatus("FAILED");
+        when(repository.findByIdAndAgentId("act-failed", "agent-a")).thenReturn(Optional.of(failed));
+        when(repository.findByAgentIdAndIdempotencyKey("agent-a", "retry-key")).thenReturn(Optional.empty());
+        when(repository.save(any(ActionEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var result = service.retryFailed("agent-a", "act-failed", "retry-key", true);
+
+        assertTrue(result.created());
+        assertEquals("READY", result.action().getStatus());
+        assertNotEquals("act-failed", result.action().getId());
+        var metadata = new ObjectMapper().readTree(result.action().getMetadataJson());
+        assertEquals("act-failed", metadata.get("retryOf").asText());
+        assertEquals("MANUAL_ACKNOWLEDGED", metadata.get("retryMode").asText());
+    }
+
+    @Test void unknownActionCannotBeRetriedEvenWithAcknowledgement() {
+        ActionEntity unknown = new ActionEntity();
+        unknown.setId("act-unknown");
+        unknown.setAgentId("agent-a");
+        unknown.setStatus("UNKNOWN");
+        when(repository.findByIdAndAgentId("act-unknown", "agent-a")).thenReturn(Optional.of(unknown));
+
+        assertThrows(ActionApplicationService.ActionStateConflictException.class,
+                () -> service.retryFailed("agent-a", "act-unknown", "retry-key", true));
+        verify(repository, never()).save(any(ActionEntity.class));
+    }
+
+    @Test void retryRequiresExplicitAcknowledgement() {
+        assertThrows(IllegalArgumentException.class,
+                () -> service.retryFailed("agent-a", "act-failed", "retry-key", false));
+        verifyNoInteractions(repository);
+    }
+
     private CreateActionRequest request(String key,Map<String,Object> args) {
         CreateActionRequest r=new CreateActionRequest(); r.setToolName("file.write"); r.setArguments(args); r.setIdempotencyKey(key); return r;
     }
