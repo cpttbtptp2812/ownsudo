@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
 from collections.abc import Iterator
+from typing import Any
 
 import httpx
 
