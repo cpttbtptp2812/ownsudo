@@ -167,7 +167,7 @@ The heartbeat interval should be comfortably shorter than the lease duration. Ne
 | P0 | Runtime foundation | Durable Action state machine, handler registry, policy-gated execution, event trace |
 | P1 | Developer execution | Python SDK and Local Worker preview; approval-to-execution flow implemented for the single configured approver |
 | P2 | Runtime hardening | Worker leases, cancellation, manual reconciliation, safe retry semantics and outbox dispatch |
-| P3 | Observability | Span ingestion and Python demo instrumentation implemented; next: event-backed live updates, redaction, automatic framework instrumentation and richer trace visualization |
+| P3 | Observability | Span ingestion, Python demo instrumentation and authenticated live span SSE notifications implemented; next: durable event replay, redaction, automatic framework instrumentation and richer trace visualization |
 | P4 | Evaluation | Versioned datasets, evaluators, experiment runs, baseline comparison and regression gates |
 | P5 | Studio | Agent registry, run explorer, trace waterfall and Evaluation workbench |
 
@@ -178,8 +178,8 @@ The heartbeat interval should be comfortably shorter than the lease duration. Ne
 - Lease heartbeats and handler timeout handling are implemented for this synchronous runtime. Java interruption is best-effort; a timed-out external side effect may still complete.
 - Expired or timed-out executions become UNKNOWN and are not automatically retried. Manual reconciliation UI is not complete.
 - Tool Registry metadata does not execute arbitrary code; only explicitly installed server-side handlers run.
-- The Trace API persists submitted spans, including parent-child relationships and provider-reported token usage. The runnable Python Agent demo emits LLM-call, Action-execution, and root Agent spans, including ERROR spans for covered failures. This is example-level instrumentation, not automatic instrumentation for arbitrary Agent frameworks.
-- The Python SDK is an early developer preview with synchronous REST Action operations, tool metadata registration, approval methods, trace ingestion/retrieval, and a Local Worker for explicitly registered Python callables. Async client support, independent Worker enrollment credentials, OS-level sandboxing, and automatic instrumentation for third-party Agent frameworks remain future work.
+- The Trace API persists submitted spans, including parent-child relationships and provider-reported token usage. The authenticated `GET /api/v1/traces/{traceId}/events` endpoint streams newly accepted and finalized spans to connected clients. An open `UNSET` span can be finalized once with an end time and `OK` or `ERROR` status, allowing clients to observe start and completion separately. Persisted spans remain the source of truth; subscribe before loading the snapshot, then deduplicate by span ID. The runnable Python Agent demo emits LLM-call, Action-execution, and root Agent spans, including ERROR spans for covered failures. This is example-level instrumentation, not automatic instrumentation for arbitrary Agent frameworks.
+- The Python SDK is an early developer preview with synchronous REST Action operations, tool metadata registration, approval methods, trace ingestion/retrieval, a live trace event iterator, and a Local Worker for explicitly registered Python callables. Async client support, independent Worker enrollment credentials, OS-level sandboxing, and automatic instrumentation for third-party Agent frameworks remain future work.
 - Risk levels are developer-configured and do not constitute a complete authorization language or RBAC model.
 
 ## Repositories

@@ -5,7 +5,9 @@ request is ambiguous: the server may have performed the external side effect.
 """
 from __future__ import annotations
 
+import json
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -276,3 +278,61 @@ class OwnAgentClient:
         """Return spans in start-time order for the authenticated Agent."""
         self._require_id(trace_id)
         return self._request("GET", f"/api/v1/traces/{trace_id}/spans")
+
+
+    def stream_trace_events(self, trace_id: str) -> Iterator[dict[str, Any]]:
+        """Yield live span events for a trace.
+
+        Load existing spans with get_trace_spans() before subscribing so the
+        persisted API remains the source of truth. This stream only carries
+        updates published after the subscription is established.
+        """
+        self._require_id(trace_id)
+        try:
+            with self._client.stream(
+                "GET",
+                f"/api/v1/traces/{trace_id}/events",
+                headers={"Accept": "text/event-stream"},
+            ) as response:
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    payload: dict[str, Any]
+                    try:
+                        payload = response.json()
+                    except (ValueError, json.JSONDecodeError):
+                        payload = {"message": "OwnAgent trace event stream request failed"}
+                    error = payload.get("error", {}) if isinstance(payload, dict) else {}
+                    raise OwnAgentAPIError(
+                        response.status_code,
+                        error.get("message") or f"OwnAgent API returned HTTP {response.status_code}",
+                        error.get("code"),
+                        payload if isinstance(payload, dict) else {},
+                    ) from exc
+
+                event_name = "message"
+                event_id: str | None = None
+                data_lines: list[str] = []
+                for line in response.iter_lines():
+                    if line == "":
+                        if data_lines:
+                            raw_data = "\\n".join(data_lines)
+                            try:
+                                data: Any = json.loads(raw_data)
+                            except json.JSONDecodeError:
+                                data = raw_data
+                            yield {"event": event_name, "id": event_id, "data": data}
+                        event_name = "message"
+                        event_id = None
+                        data_lines = []
+                    elif line.startswith(":"):
+                        continue
+                    elif line.startswith("event:"):
+                        event_name = line[6:].strip() or "message"
+                    elif line.startswith("id:"):
+                        event_id = line[3:].strip()
+                    elif line.startswith("data:"):
+                        value = line[5:]
+                        data_lines.append(value.removeprefix(" "))
+        except httpx.TimeoutException as exc:
+            raise OwnAgentTimeoutError("Timed out while reading the OwnAgent trace event stream") from exc
