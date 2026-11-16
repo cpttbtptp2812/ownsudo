@@ -22,7 +22,8 @@ def test_context_manager_reports_open_and_final_span_with_provider_usage() -> No
             with client.trace_span("trace-1", "llm.call") as llm:
                 llm.set_usage(input_tokens=10, output_tokens=4)
 
-    assert root.span_id\n    assert len(requests) == 4
+    assert root.span_id
+    assert len(requests) == 4
     assert requests[0]["status"] == "UNSET" and requests[0]["endedAt"] is None
     assert requests[1]["parentSpanId"] == requests[0]["spanId"]
     assert requests[2]["status"] == "OK"
