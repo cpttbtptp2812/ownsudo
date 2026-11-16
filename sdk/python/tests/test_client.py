@@ -161,8 +161,8 @@ def test_stream_trace_events_yields_json_sse_events() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
-            text='event: connected\\ndata: {"traceId":"trace-123"}\\n\\n'
-                 'event: trace_span\\nid: span-1\\ndata: {"spanId":"span-1","status":"OK"}\\n\\n',
+            text='event: connected\ndata: {"traceId":"trace-123"}\n\n'
+                 'event: trace_span\nid: span-1\ndata: {"spanId":"span-1","status":"OK"}\n\n',
         )
 
     with OwnAgentClient("http://localhost:8080", "test-key",
