@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/actions")
@@ -145,6 +146,28 @@ public class ActionController {
         } catch (ActionExecutionStateService.ActionStateConflictException | ObjectOptimisticLockingFailureException e) {
             return ResponseEntity.status(409).body(Map.of(
                     "error", Map.of("code", "ACTION_STATE_CONFLICT", "message", e.getMessage())));
+        }
+    }
+
+    @PostMapping("/{actionId}/retry")
+    public ResponseEntity<?> retryFailed(
+            @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
+            @PathVariable String actionId,
+            @RequestParam(defaultValue = "false") boolean confirmPossibleDuplicateSideEffect) {
+        try {
+            var result = actionService.retryFailed(agentId, actionId,
+                    "manual-retry-" + UUID.randomUUID(),
+                    confirmPossibleDuplicateSideEffect);
+            return ResponseEntity.status(result.created() ? 201 : 200)
+                    .body(ActionResponse.from(result.action(), objectMapper));
+        } catch (ActionApplicationService.ActionNotFoundException e) {
+            return ResponseEntity.notFound().build();
+        } catch (ActionApplicationService.ActionStateConflictException e) {
+            return ResponseEntity.status(409).body(Map.of(
+                    "error", Map.of("code", "ACTION_RETRY_NOT_ALLOWED", "message", e.getMessage())));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", Map.of("code", "ACTION_RETRY_CONFIRMATION_REQUIRED", "message", e.getMessage())));
         }
     }
 
