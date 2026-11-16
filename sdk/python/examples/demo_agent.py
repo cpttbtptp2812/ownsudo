@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -84,14 +85,13 @@ def search_workspace(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-
 def _record_span(ownagent: OwnAgentClient, span: dict[str, Any]) -> None:
     """Best-effort telemetry; trace ingestion failures must not hide Agent results."""
     try:
         ownagent.create_trace_span(span)
     except Exception as exc:  # noqa: BLE001
-        import sys
         print(f"Warning: trace span was not persisted: {exc}", file=sys.stderr)
+
 
 def run_agent(
     llm: httpx.Client,
@@ -261,7 +261,7 @@ def run_agent(
                 raise
 
             action_ended_at = datetime.now(timezone.utc)
-            ownagent.create_trace_span({
+            _record_span(ownagent, {
                 "trace_id": run_id,
                 "span_id": uuid.uuid4().hex,
                 "parent_span_id": root_span_id,
