@@ -123,7 +123,7 @@ The Action lifecycle and tool metadata are persisted by OwnAgent. The model requ
 - `UNKNOWN` requires reconciliation against the external system before a new Action is submitted.
 - The Worker currently processes one Action at a time per process. Run multiple Worker processes for concurrency; the database row lock and lease token prevent duplicate claims of the same Action.
 - Approval-required Actions can be listed and decided using the separate approver key. Approval preserves the original `REQUIRE_APPROVAL` policy decision, records the configured approver and reason, and moves the Action to `READY`; rejection moves it to `DENIED`. A Worker can claim an approved Action only after that state transition.
-- The SDK is synchronous. Async client, OS-level sandboxing, Worker enrollment/independent credentials, approval resumption, automatic safe retries, MCP integration and framework adapters remain future work.
+- The SDK is synchronous. Async client, OS-level sandboxing, Worker enrollment/independent credentials, approval resumption, automatic safe retries, MCP integration and framework-specific automatic adapters remain future work.
 
 ## Errors
 
@@ -158,8 +158,35 @@ client.create_trace_span({
 spans = client.get_trace_spans(trace_id)
 ```
 
-Use `usage_source="MISSING"` when the provider does not return usage. Do not put prompts, completions, credentials, or personal data in span attributes. The backend stores span metadata and provider token counts; it does not infer or fabricate usage. Action lifecycle events remain available through the existing Action events endpoint. The example currently emits correlated LLM and Action spans; automatic instrumentation for arbitrary frameworks and a full event-backed waterfall remain future work.
+Use `usage_source="MISSING"` when the provider does not return usage. Do not put prompts, completions, credentials, or personal data in span attributes. The backend stores span metadata and provider token counts; it does not infer or fabricate usage. Action lifecycle events remain available through the existing Action events endpoint. The example currently emits correlated LLM and Action spans; the context-managed trace helper is available for synchronous Python code; automatic instrumentation for arbitrary frameworks and async adapters remain future work.
 
+
+## Instrument an external Agent
+
+Use the context manager to report span start and completion. Nested spans automatically inherit the current parent span in the same trace:
+
+```python
+with client.trace_span(
+    trace_id,
+    "agent.run",
+    run_id=run_id,
+    attributes={"framework": "my-agent"},
+) as root:
+    with client.trace_span(trace_id, "llm.chat", span_kind="CLIENT") as llm:
+        response = model_client.chat.completions.create(...)
+        # Only pass usage actually returned by the provider.
+        if response.usage:
+            llm.set_usage(
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
+            )
+    with client.trace_span(trace_id, "tool.search", span_kind="INTERNAL"):
+        result = search_tool(...)
+```
+
+The SDK sends an open `UNSET` span when entering the context and a final `OK` or `ERROR` update when leaving it. Exceptions are re-raised after the error span is attempted. Telemetry delivery is best-effort by default so an observability outage does not replace the Agent's business result; pass `best_effort=False` to make delivery errors visible to the caller. The helper records error type, not exception text, by default. It does not capture prompts, completions, or secrets. Token usage remains missing unless the caller supplies provider-reported values using `set_usage()`.
+
+This is a lightweight synchronous integration helper, not automatic instrumentation for every framework. Async Agent frameworks need an async adapter, which is not included yet.
 
 ## Live trace event stream
 
