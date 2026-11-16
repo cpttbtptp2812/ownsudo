@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 
 import httpx
 
@@ -332,6 +333,6 @@ class OwnAgentClient:
                         event_id = line[3:].strip()
                     elif line.startswith("data:"):
                         value = line[5:]
-                        data_lines.append(value[1:] if value.startswith(" ") else value)
+                        data_lines.append(value.removeprefix(" "))
         except httpx.TimeoutException as exc:
             raise OwnAgentTimeoutError("Timed out while reading the OwnAgent trace event stream") from exc
