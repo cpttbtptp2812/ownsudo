@@ -156,6 +156,19 @@ public class AgentPlatformController {
         return res;
     }
 
+    @PostMapping("/evaluation/judge")
+    public ResponseEntity<?> judgeAgentRun(@RequestBody(required = false) Map<String, Object> req) {
+        try {
+            String task = String.valueOf(req == null ? "" : req.getOrDefault("task", ""));
+            String answer = String.valueOf(req == null ? "" : req.getOrDefault("answer", ""));
+            String evidence = objectMapper.writeValueAsString(req == null ? Map.of() : req.getOrDefault("evidence", Map.of()));
+            String rubric = String.valueOf(req == null ? "" : req.getOrDefault("rubric", "任务完成度、指令遵循、回答正确性、工具使用合理性"));
+            var scores = llmClientService.judgeAgentRun(task, answer, evidence, rubric);
+            return ResponseEntity.ok(Map.of("scores", scores, "judgeModel", llmClientService.getConfig("EVAL_JUDGE_MODEL", llmClientService.getConfig("LLM_MODEL", "configured-model"))));
+        } catch (Exception e) {
+            return ResponseEntity.status(502).body(Map.of("error", Map.of("code", "JUDGE_FAILED", "message", e.getMessage() == null ? "Judge provider unavailable" : e.getMessage())));
+        }
+    }
     @GetMapping("/agents")
     public List<AgentEntity> getAgents() {
         List<AgentEntity> list = agentRepository.findAllByOrderByCreatedAtDesc();
