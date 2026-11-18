@@ -6,6 +6,7 @@ import com.ownsudo.dto.TraceSpanResponse;
 import com.ownsudo.security.AgentApiKeyFilter;
 import com.ownsudo.service.TraceEventStreamService;
 import com.ownsudo.service.TraceSpanService;
+import com.ownsudo.service.LlmClientService;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -20,11 +21,13 @@ public class TraceController {
     private final TraceSpanService service;
     private final TraceEventStreamService eventStream;
     private final ObjectMapper mapper;
+    private final LlmClientService llmClientService;
 
-    public TraceController(TraceSpanService service, TraceEventStreamService eventStream, ObjectMapper mapper) {
+    public TraceController(TraceSpanService service, TraceEventStreamService eventStream, ObjectMapper mapper, LlmClientService llmClientService) {
         this.service = service;
         this.eventStream = eventStream;
         this.mapper = mapper;
+        this.llmClientService = llmClientService;
     }
 
     @PostMapping("/spans")
@@ -58,6 +61,30 @@ public class TraceController {
                 .map(span -> TraceSpanResponse.from(span, mapper)).toList());
     }
 
+    @PostMapping("/{traceId}/judge")
+    public ResponseEntity<?> judge(
+            @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
+            @PathVariable String traceId,
+            @RequestBody(required = false) Map<String, Object> request) {
+        try {
+            List<TraceSpanResponse> spans = service.list(agentId, traceId).stream()
+                    .map(span -> TraceSpanResponse.from(span, mapper)).toList();
+            String task = String.valueOf(request == null ? "" : request.getOrDefault("task", ""));
+            String answer = String.valueOf(request == null ? "" : request.getOrDefault("answer", ""));
+            String rubric = String.valueOf(request == null ? "" : request.getOrDefault("rubric", "任务完成度、指令遵循、回答正确性、工具使用合理性"));
+            String evidence = mapper.writeValueAsString(spans);
+            var result = llmClientService.judgeAgentRun(task, answer, evidence, rubric);
+            return ResponseEntity.ok(Map.of(
+                    "traceId", traceId,
+                    "judgeModel", llmClientService.getConfig("EVAL_JUDGE_MODEL", llmClientService.getConfig("LLM_MODEL", "configured-model")),
+                    "scores", result
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(502).body(Map.of(
+                    "error", Map.of("code", "JUDGE_FAILED", "message", e.getMessage() == null ? "Judge provider unavailable" : e.getMessage())
+            ));
+        }
+    }
     @GetMapping(path = "/{traceId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<?> events(
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
