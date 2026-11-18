@@ -335,7 +335,51 @@ public class LlmClientService {
         return null;
     }
 
-        public float[] getEmbeddings(String text) {
+        /** Real semantic evaluation using the configured LLM as a Judge. */
+    public JsonNode judgeAgentRun(String task, String answer, String evidence, String rubric) throws Exception {
+        String configuredBaseUrl = getConfig("LLM_BASE_URL", "https://ollama.com/v1");
+        String configuredModel = getConfig("EVAL_JUDGE_MODEL", getConfig("LLM_MODEL", "gemma4:31b-cloud"));
+        String apiKey = getConfig("LLM_API_KEY", getConfig("DEEPSEEK_API_KEY", ""));
+        String baseUrl = configuredBaseUrl.endsWith("/") ? configuredBaseUrl : configuredBaseUrl + "/";
+        String endpoint = baseUrl + "chat/completions";
+        String system = "You are an objective AI Agent evaluator. Evaluate only the supplied task, answer and execution evidence. "
+NaN
+NaN
+NaN
+        String user = "TASK:\\n" + safe(task) + "\\n\\nFINAL ANSWER:\\n" + safe(answer)
+NaN
+        List<Map<String, String>> messages = List.of(
+                Map.of("role", "system", "content", system),
+                Map.of("role", "user", "content", user)
+        );
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", configuredModel);
+        body.put("messages", messages);
+        body.put("temperature", 0.0);
+        body.put("stream", false);
+        HttpRequest.Builder req = HttpRequest.newBuilder().uri(URI.create(endpoint))
+NaN
+NaN
+        if (apiKey != null && !apiKey.isBlank() && !apiKey.startsWith("sk-***")) req.header("Authorization", "Bearer " + apiKey.trim());
+        HttpResponse<String> response = httpClient.send(req.build(), HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) throw new IllegalStateException("Judge provider returned HTTP " + response.statusCode());
+        JsonNode root = objectMapper.readTree(response.body());
+        String content = root.path("choices").path(0).path("message").path("content").asText("");
+        if (content.isBlank()) throw new IllegalStateException("Judge returned an empty response");
+        String json = content.trim();
+        if (json.startsWith("```")) {
+            json = json.replaceFirst("^```(?:json)?\\s*", "").replaceFirst("\\s*```$", "").trim();
+        }
+        JsonNode result = objectMapper.readTree(json);
+        if (!result.isObject() || !result.has("overall")) throw new IllegalStateException("Judge response is not a valid evaluation object");
+        return result;
+    }
+
+    private static String safe(String value) {
+        if (value == null) return "(missing)";
+        return value.length() > 20000 ? value.substring(0, 20000) + "\\n[truncated]" : value;
+    }
+    public float[] getEmbeddings(String text) {
         if (text == null || text.isBlank()) return null;
 
         String configuredEmbedBase = getConfig("EMBEDDING_BASE_URL", "").trim();
