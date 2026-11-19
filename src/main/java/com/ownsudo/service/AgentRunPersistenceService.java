@@ -37,9 +37,11 @@ public class AgentRunPersistenceService {
                 SELECT COUNT(*) AS span_count,
                        SUM(CASE WHEN status = 'ERROR' THEN 1 ELSE 0 END) AS error_count,
                        SUM(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END) AS open_count,
-                       SUM(input_tokens) AS input_tokens,
-                       SUM(output_tokens) AS output_tokens,
-                       SUM(total_tokens) AS total_tokens,
+                       SUM(CASE WHEN usage_source = 'PROVIDER' THEN input_tokens ELSE NULL END) AS input_tokens,
+                       SUM(CASE WHEN usage_source = 'PROVIDER' THEN output_tokens ELSE NULL END) AS output_tokens,
+                       SUM(CASE WHEN usage_source = 'PROVIDER' THEN total_tokens ELSE NULL END) AS total_tokens,
+                       SUM(CASE WHEN usage_source = 'PROVIDER' THEN 1 ELSE 0 END) AS provider_usage_count,
+                       SUM(CASE WHEN usage_source = 'ESTIMATED' THEN 1 ELSE 0 END) AS estimated_usage_count,
                        MIN(started_at) AS started_at,
                        MAX(ended_at) AS ended_at
                   FROM agent_trace_span
@@ -91,6 +93,7 @@ public class AgentRunPersistenceService {
         if (span.getInputTokens() != null) payload.put("inputTokens", span.getInputTokens());
         if (span.getOutputTokens() != null) payload.put("outputTokens", span.getOutputTokens());
         if (span.getTotalTokens() != null) payload.put("totalTokens", span.getTotalTokens());
+        payload.put("usageSource", span.getUsageSource());
         try {
             jdbc.update("""
                     INSERT IGNORE INTO agent_run_event
@@ -123,8 +126,10 @@ public class AgentRunPersistenceService {
     }
 
     private String usageSource(Map<String, Object> aggregate) {
-        return aggregate.get("input_tokens") != null || aggregate.get("output_tokens") != null
-                || aggregate.get("total_tokens") != null ? "PROVIDER" : "MISSING";
+        int providerCount = ((Number) aggregate.get("provider_usage_count")).intValue();
+        if (providerCount > 0) return "PROVIDER";
+        int estimatedCount = ((Number) aggregate.get("estimated_usage_count")).intValue();
+        return estimatedCount > 0 ? "ESTIMATED" : "MISSING";
     }
 
     private static String stableId(String prefix, String value) {
