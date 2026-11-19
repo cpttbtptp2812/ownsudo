@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.sql.Timestamp;
 import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
@@ -48,8 +49,8 @@ public class AgentRunPersistenceService {
         int spanCount = ((Number) aggregate.get("span_count")).intValue();
         int errorCount = ((Number) aggregate.get("error_count")).intValue();
         int openCount = ((Number) aggregate.get("open_count")).intValue();
-        LocalDateTime startedAt = (LocalDateTime) aggregate.get("started_at");
-        LocalDateTime endedAt = (LocalDateTime) aggregate.get("ended_at");
+        LocalDateTime startedAt = asLocalDateTime(aggregate.get("started_at"));
+        LocalDateTime endedAt = asLocalDateTime(aggregate.get("ended_at"));
         String status = errorCount > 0 ? "ERROR" : openCount > 0 ? "RUNNING" : "COMPLETED";
         Long duration = endedAt == null || startedAt == null ? null
                 : java.time.Duration.between(startedAt, endedAt).toMillis();
@@ -103,6 +104,12 @@ public class AgentRunPersistenceService {
         } catch (Exception e) {
             throw new IllegalStateException("Could not serialize Run event", e);
         }
+    }
+
+    private static LocalDateTime asLocalDateTime(Object value) {
+        if (value instanceof LocalDateTime dateTime) return dateTime;
+        if (value instanceof Timestamp timestamp) return timestamp.toLocalDateTime();
+        return null;
     }
 
     private String jsonAttribute(String json, String key) {
