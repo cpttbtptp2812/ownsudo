@@ -846,7 +846,7 @@ public class AgentPlatformController {
                         } else {
                             modelRequestDetail.put("content_capture", "disabled");
                         }
-                        sendExecutionEvent(emitter, isClientConnected, modelStepId, 40 + currentDepth,
+                        sendExecutionEvent(emitter, isClientConnected, traceStepsMap, modelStepId, 40 + currentDepth,
                                 "llm", "running", "模型请求 · 第 " + currentDepth + " 轮",
                                 "正在向模型发送当前上下文与可用工具定义", modelRequestDetail);
 
@@ -856,7 +856,7 @@ public class AgentPlatformController {
                         if (compResponse == null || !compResponse.has("choices") || compResponse.get("choices").size() == 0) {
                             Map<String, Object> emptyResponseDetail = new LinkedHashMap<>(modelRequestDetail);
                             emptyResponseDetail.put("error", "模型未返回有效 choices");
-                            sendExecutionEvent(emitter, isClientConnected, modelStepId, 40 + currentDepth,
+                            sendExecutionEvent(emitter, isClientConnected, traceStepsMap, modelStepId, 40 + currentDepth,
                                     "llm", "failed", "模型响应为空 · 第 " + currentDepth + " 轮",
                                     "Provider 没有返回可用的模型消息", emptyResponseDetail);
                             activeModelStepId.compareAndSet(modelStepId, null);
@@ -868,7 +868,7 @@ public class AgentPlatformController {
                             modelResponseDetail.put("model_response", boundedTraceValue(objectMapper.convertValue(messageNode, Object.class)));
                             if (compResponse.has("usage")) modelResponseDetail.put("usage", objectMapper.convertValue(compResponse.get("usage"), Object.class));
                             if (compResponse.has("model")) modelResponseDetail.put("actual_model", compResponse.path("model").asText());
-                            sendExecutionEvent(emitter, isClientConnected, modelStepId, 40 + currentDepth,
+                            sendExecutionEvent(emitter, isClientConnected, traceStepsMap, modelStepId, 40 + currentDepth,
                                     "llm", "done", "模型响应 · 第 " + currentDepth + " 轮",
                                     messageNode.has("tool_calls") ? "模型返回了工具调用请求" : "模型返回了文本内容",
                                     modelResponseDetail);
@@ -1054,7 +1054,7 @@ public class AgentPlatformController {
                         }
                         String failedStepId = activeModelStepId.getAndSet(null);
                         if (failedStepId != null) {
-                            sendExecutionEvent(emitter, isClientConnected, failedStepId,
+                            sendExecutionEvent(emitter, isClientConnected, traceStepsMap, failedStepId,
                                     40 + currentDepth, "llm", "failed", "模型请求失败 · 第 " + currentDepth + " 轮",
                                     "模型调用发生异常，已记录真实错误", failedModelDetail);
                         }
@@ -1112,7 +1112,7 @@ public class AgentPlatformController {
                 } else {
                     finalRequestDetail.put("content_capture", "disabled");
                 }
-                sendExecutionEvent(emitter, isClientConnected, finalModelStepId, 60,
+                sendExecutionEvent(emitter, isClientConnected, traceStepsMap, finalModelStepId, 60,
                         "llm", "running", "最终回答生成", "正在将工具结果和上下文提交给模型", finalRequestDetail);
 
                 ModelGatewayService.FailoverContext failoverCtx = modelGatewayService.streamChatWithFailover(
@@ -1158,7 +1158,7 @@ public class AgentPlatformController {
                         "completion_tokens", completionTokensRef.get(),
                         "usage_reported", hasRealUsageRef.get()));
                 finalResponseDetail.put("provider_route", failoverCtx.triggered ? failoverCtx.fallbackChannel : "primary");
-                sendExecutionEvent(emitter, isClientConnected, finalModelStepId, 60,
+                sendExecutionEvent(emitter, isClientConnected, traceStepsMap, finalModelStepId, 60,
                         "llm", "done", "最终回答生成", "模型流式回答已完成", finalResponseDetail);
                 activeModelStepId.compareAndSet(finalModelStepId, null);
 
@@ -1541,7 +1541,8 @@ public class AgentPlatformController {
         catch (Exception ignored) { return value; }
     }
 
-    private void sendExecutionEvent(SseEmitter emitter, AtomicBoolean isConnected, String stepId,
+    private void sendExecutionEvent(SseEmitter emitter, AtomicBoolean isConnected,
+                                    Map<Integer, Object> traceStepsMap, String stepId,
                                     int seq, String phase, String status, String title,
                                     String subtitle, Map<String, Object> details) {
         if (isConnected != null && !isConnected.get()) return;
@@ -1557,6 +1558,7 @@ public class AgentPlatformController {
         payload.put("rightSubtitle", subtitle);
         payload.put("rightDetail", details);
         payload.put("timestamp", System.currentTimeMillis());
+        if (traceStepsMap != null) traceStepsMap.put(seq, payload);
         try {
             String json = objectMapper.writeValueAsString(payload);
             emitter.send(SseEmitter.event().name("agent_step").data(json));
