@@ -11,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,7 +30,7 @@ public class ChatRunRecorder {
                                      String model, String provider, String userPrompt) {
         String runId = "chat-run-" + UUID.randomUUID();
         String traceId = UUID.randomUUID().toString().replace("-", "");
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now();
         RunContext context = new RunContext(runId, traceId, sessionId, agentId, now);
         active.set(context);
         jdbc.update("""
@@ -77,7 +76,7 @@ public class ChatRunRecorder {
         if (stepId != null && !stepId.isBlank()) {
             String spanId = safeSpanId(stepId);
             captureProviderUsage(ctx, spanId, details);
-            LocalDateTime now = LocalDateTime.ofEpochSecond(timestamp / 1000, (int) (timestamp % 1000) * 1_000_000, ZoneOffset.UTC);
+            LocalDateTime now = LocalDateTime.now();
             LocalDateTime started = ctx.spanStarts.computeIfAbsent(spanId, ignored -> now);
             String spanStatus = "FAILED".equalsIgnoreCase(status) || "ERROR".equalsIgnoreCase(status)
                     ? "ERROR" : ("RUNNING".equalsIgnoreCase(status) || "STREAMING".equalsIgnoreCase(status) ? "UNSET" : "OK");
