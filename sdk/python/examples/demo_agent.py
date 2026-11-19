@@ -162,7 +162,9 @@ def run_agent(
                 "name": "chat.completions", "span_kind": "CLIENT", "status": "ERROR",
                 "started_at": llm_started_at.isoformat(), "ended_at": llm_ended_at.isoformat(),
                 "usage_source": "MISSING",
-                "attributes": {"provider": "openai-compatible", "error_type": type(exc).__name__,
+                "attributes": {"provider": "openai-compatible", "model_step": step,
+                               "prompt_messages": capture(messages),
+                               "error_type": type(exc).__name__,
                                "error_message": str(exc)[:500]},
             })
             _record_span(ownagent, {
@@ -176,7 +178,26 @@ def run_agent(
         payload = response.json()
         choices = payload.get("choices") or []
         if not choices:
-            raise RuntimeError("The model returned no choices")
+            failure = RuntimeError("The model returned no choices")
+            _record_span(ownagent, {
+                "trace_id": run_id, "span_id": uuid.uuid4().hex,
+                "parent_span_id": root_span_id, "run_id": run_id,
+                "name": "chat.completions", "span_kind": "CLIENT", "status": "ERROR",
+                "started_at": llm_started_at.isoformat(), "ended_at": llm_ended_at.isoformat(),
+                "usage_source": "MISSING",
+                "attributes": {"provider": "openai-compatible", "model_step": step,
+                               "prompt_messages": capture(messages),
+                               "error_type": type(failure).__name__,
+                               "error_message": str(failure)},
+            })
+            _record_span(ownagent, {
+                "trace_id": run_id, "span_id": root_span_id, "run_id": run_id,
+                "name": "agent.run", "span_kind": "INTERNAL", "status": "ERROR",
+                "started_at": root_started_at.isoformat(), "ended_at": llm_ended_at.isoformat(),
+                "usage_source": "MISSING",
+                "attributes": {"error_type": type(failure).__name__, "error_message": str(failure)},
+            })
+            raise failure
 
         message = choices[0].get("message") or {}
         tool_calls = message.get("tool_calls") or []
