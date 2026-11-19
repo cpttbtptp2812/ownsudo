@@ -77,6 +77,9 @@ public class TraceController {
         try {
             List<TraceSpanResponse> spans = service.list(agentId, traceId).stream()
                     .map(span -> TraceSpanResponse.from(span, mapper)).toList();
+            if (spans.isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
             String task = String.valueOf(request == null ? "" : request.getOrDefault("task", ""));
             String answer = String.valueOf(request == null ? "" : request.getOrDefault("answer", ""));
             String rubric = String.valueOf(request == null ? "" : request.getOrDefault("rubric", "任务完成度、指令遵循、回答正确性、工具使用合理性"));
