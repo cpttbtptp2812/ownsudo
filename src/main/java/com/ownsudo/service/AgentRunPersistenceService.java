@@ -3,13 +3,15 @@ package com.ownsudo.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ownsudo.entity.TraceSpanEntity;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
 import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
@@ -55,32 +57,33 @@ public class AgentRunPersistenceService {
         LocalDateTime endedAt = asLocalDateTime(aggregate.get("ended_at"));
         String status = errorCount > 0 ? "ERROR" : openCount > 0 ? "RUNNING" : "COMPLETED";
         Long duration = endedAt == null || startedAt == null ? null
-                : java.time.Duration.between(startedAt, endedAt).toMillis();
+                : Duration.between(startedAt, endedAt).toMillis();
 
         String sessionId = jsonAttribute(span.getAttributesJson(), "session.id");
         String conversationId = jsonAttribute(span.getAttributesJson(), "conversation.id");
         String name = span.getName() == null || span.getName().isBlank() ? "Agent run" : span.getName();
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
 
-        jdbc.update("""
-                INSERT INTO agent_run
-                    (id, agent_id, run_id, trace_id, session_id, conversation_id, name, status,
-                     started_at, ended_at, duration_ms, span_count, error_count,
-                     input_tokens, output_tokens, total_tokens, usage_source, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
-                ON DUPLICATE KEY UPDATE
-                    trace_id = VALUES(trace_id),
-                    session_id = COALESCE(VALUES(session_id), session_id),
-                    conversation_id = COALESCE(VALUES(conversation_id), conversation_id),
-                    name = VALUES(name), status = VALUES(status),
-                    started_at = VALUES(started_at), ended_at = VALUES(ended_at),
-                    duration_ms = VALUES(duration_ms), span_count = VALUES(span_count),
-                    error_count = VALUES(error_count), input_tokens = VALUES(input_tokens),
-                    output_tokens = VALUES(output_tokens), total_tokens = VALUES(total_tokens),
-                    usage_source = VALUES(usage_source), updated_at = UTC_TIMESTAMP(6)
-                """, runPk, agentId, runId, span.getTraceId(), sessionId, conversationId, name, status,
-                startedAt, endedAt, duration, spanCount, errorCount,
-                aggregate.get("input_tokens"), aggregate.get("output_tokens"), aggregate.get("total_tokens"),
-                usageSource(aggregate));
+        Map<String, Object> values = Map.of(
+                "id", runPk,
+                "agentId", agentId,
+                "runId", runId,
+                "traceId", span.getTraceId(),
+                "sessionId", sessionId == null ? "" : sessionId,
+                "conversationId", conversationId == null ? "" : conversationId,
+                "name", name,
+                "status", status,
+                "startedAt", startedAt,
+                "endedAt", endedAt,
+                "duration", duration,
+                "spanCount", spanCount,
+                "errorCount", errorCount,
+                "inputTokens", aggregate.get("input_tokens"),
+                "outputTokens", aggregate.get("output_tokens"),
+                "totalTokens", aggregate.get("total_tokens"),
+                "usageSource", usageSource(aggregate)
+        );
+        persistRun(values, now);
 
         String eventType = span.getEndedAt() == null ? "SPAN_STARTED"
                 : "ERROR".equals(span.getStatus()) ? "SPAN_FAILED" : "SPAN_COMPLETED";
@@ -96,17 +99,62 @@ public class AgentRunPersistenceService {
         payload.put("usageSource", span.getUsageSource());
         try {
             jdbc.update("""
-                    INSERT IGNORE INTO agent_run_event
+                    INSERT INTO agent_run_event
                         (id, agent_id, run_id, trace_id, span_id, event_type, status,
                          event_time, payload_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, stableId("evt", agentId + ":" + span.getTraceId() + ":" + span.getSpanId()
                     + ":" + span.getStatus() + ":" + span.getEndedAt()),
                     agentId, runId, span.getTraceId(), span.getSpanId(), eventType, span.getStatus(),
-                    eventTime, mapper.writeValueAsString(payload));
+                    eventTime, mapper.writeValueAsString(payload), now);
+        } catch (DuplicateKeyException ignored) {
+            // Re-delivery of the same span lifecycle event is idempotent.
         } catch (Exception e) {
             throw new IllegalStateException("Could not serialize Run event", e);
         }
+    }
+
+    private void persistRun(Map<String, Object> values, LocalDateTime now) {
+        int existing = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agent_run WHERE agent_id = ? AND run_id = ?",
+                Integer.class, values.get("agentId"), values.get("runId"));
+        if (existing > 0) {
+            updateRun(values, now);
+            return;
+        }
+        try {
+            jdbc.update("""
+                    INSERT INTO agent_run
+                        (id, agent_id, run_id, trace_id, session_id, conversation_id, name, status,
+                         started_at, ended_at, duration_ms, span_count, error_count,
+                         input_tokens, output_tokens, total_tokens, usage_source, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, values.get("id"), values.get("agentId"), values.get("runId"), values.get("traceId"),
+                    emptyToNull((String) values.get("sessionId")), emptyToNull((String) values.get("conversationId")),
+                    values.get("name"), values.get("status"), values.get("startedAt"), values.get("endedAt"),
+                    values.get("duration"), values.get("spanCount"), values.get("errorCount"),
+                    values.get("inputTokens"), values.get("outputTokens"), values.get("totalTokens"),
+                    values.get("usageSource"), now, now);
+        } catch (DuplicateKeyException concurrentInsert) {
+            updateRun(values, now);
+        }
+    }
+
+    private void updateRun(Map<String, Object> values, LocalDateTime now) {
+        jdbc.update("""
+                UPDATE agent_run
+                   SET trace_id = ?, session_id = COALESCE(?, session_id),
+                       conversation_id = COALESCE(?, conversation_id), name = ?, status = ?,
+                       started_at = ?, ended_at = ?, duration_ms = ?, span_count = ?,
+                       error_count = ?, input_tokens = ?, output_tokens = ?, total_tokens = ?,
+                       usage_source = ?, updated_at = ?
+                 WHERE agent_id = ? AND run_id = ?
+                """, values.get("traceId"), emptyToNull((String) values.get("sessionId")),
+                emptyToNull((String) values.get("conversationId")), values.get("name"), values.get("status"),
+                values.get("startedAt"), values.get("endedAt"), values.get("duration"),
+                values.get("spanCount"), values.get("errorCount"), values.get("inputTokens"),
+                values.get("outputTokens"), values.get("totalTokens"), values.get("usageSource"),
+                now, values.get("agentId"), values.get("runId"));
     }
 
     private static LocalDateTime asLocalDateTime(Object value) {
@@ -130,6 +178,10 @@ public class AgentRunPersistenceService {
         if (providerCount > 0) return "PROVIDER";
         int estimatedCount = ((Number) aggregate.get("estimated_usage_count")).intValue();
         return estimatedCount > 0 ? "ESTIMATED" : "MISSING";
+    }
+
+    private static String emptyToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     private static String stableId(String prefix, String value) {
