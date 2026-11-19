@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.Map;
+import org.mockito.ArgumentCaptor;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -36,7 +38,9 @@ class ChatRunRecorderTest {
         verify(jdbc).update(contains("INSERT INTO chat_agent_run"), any(Object[].class));
         verify(jdbc, atLeast(4)).update(contains("INSERT INTO chat_agent_run_event"), any(Object[].class));
         verify(jdbc, atLeast(2)).update(contains("INSERT INTO chat_agent_run_span"), any(Object[].class));
-        verify(jdbc).update(contains("SET status = ?"), argThat(args ->
-                runId.equals(args[args.length - 1]) && "PROVIDER".equals(args[6])));
+        ArgumentCaptor<Object[]> updateArgs = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc).update(contains("SET status = ?"), updateArgs.capture());
+        assertEquals(runId, updateArgs.getValue()[8]);
+        assertEquals("PROVIDER", updateArgs.getValue()[6]);
     }
 }
