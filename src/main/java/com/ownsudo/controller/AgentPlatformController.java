@@ -879,7 +879,11 @@ public class AgentPlatformController {
                         if (compResponse != null && compResponse.has("choices") && compResponse.get("choices").size() > 0) {
                             com.fasterxml.jackson.databind.JsonNode messageNode = compResponse.get("choices").get(0).path("message");
                             Map<String, Object> modelResponseDetail = new LinkedHashMap<>(modelRequestDetail);
-                            modelResponseDetail.put("model_response", boundedTraceValue(objectMapper.convertValue(messageNode, Object.class)));
+                            if (isExecutionContentCaptureEnabled()) {
+                                modelResponseDetail.put("model_response", boundedTraceValue(objectMapper.convertValue(messageNode, Object.class)));
+                            } else {
+                                modelResponseDetail.put("content_capture", "disabled");
+                            }
                             if (compResponse.has("usage")) modelResponseDetail.put("usage", objectMapper.convertValue(compResponse.get("usage"), Object.class));
                             if (compResponse.has("model")) modelResponseDetail.put("actual_model", compResponse.path("model").asText());
                             sendExecutionEvent(emitter, isClientConnected, traceStepsMap, modelStepId, 40 + currentDepth,
@@ -1204,7 +1208,11 @@ public class AgentPlatformController {
                 long durationMs = System.currentTimeMillis() - startTime;
                 String durationStr = String.format(Locale.US, "%.2fs", durationMs / 1000.0);
                 Map<String, Object> finalResponseDetail = new LinkedHashMap<>(finalRequestDetail);
-                finalResponseDetail.put("model_response", boundedTraceValue(replyBuffer.toString()));
+                if (isExecutionContentCaptureEnabled()) {
+                    finalResponseDetail.put("model_response", boundedTraceValue(replyBuffer.toString()));
+                } else {
+                    finalResponseDetail.put("content_capture", "disabled");
+                }
                 finalResponseDetail.put("durationMs", durationMs);
                 if (hasRealUsageRef.get()) {
                     finalResponseDetail.put("usage", Map.of(
