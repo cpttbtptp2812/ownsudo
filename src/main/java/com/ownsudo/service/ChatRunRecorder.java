@@ -144,9 +144,14 @@ public class ChatRunRecorder {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         jdbc.update("""
                 UPDATE chat_agent_run SET status = 'ERROR', ended_at = ?, duration_ms = ?,
-                    error_message = ?, updated_at = ? WHERE run_id = ?
+                    error_message = ?, input_tokens = ?, output_tokens = ?, total_tokens = ?,
+                    usage_source = ?, updated_at = ? WHERE run_id = ?
                 """, now, Duration.between(ctx.startedAt, now).toMillis(),
-                error == null ? "Unknown execution error" : safeError(error), now, ctx.runId);
+                error == null ? "Unknown execution error" : safeError(error),
+                ctx.providerUsageSeen ? ctx.inputTokens : null,
+                ctx.providerUsageSeen ? ctx.outputTokens : null,
+                ctx.providerUsageSeen ? ctx.inputTokens + ctx.outputTokens : null,
+                ctx.providerUsageSeen ? "PROVIDER" : "MISSING", now, ctx.runId);
         recordEvent("RUN_FAILED", "ERROR", Map.of(
                 "errorType", error == null ? "Unknown" : error.getClass().getSimpleName(),
                 "message", error == null ? "Unknown execution error" : safeError(error)));
