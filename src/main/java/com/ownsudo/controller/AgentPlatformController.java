@@ -1292,7 +1292,7 @@ public class AgentPlatformController {
                     Map<String, Object> failedDetail = new LinkedHashMap<>();
                     failedDetail.put("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
                     failedDetail.put("error_type", e.getClass().getSimpleName());
-                    sendExecutionEvent(emitter, isClientConnected, activeStepId, 60,
+                    sendExecutionEvent(emitter, isClientConnected, traceStepsMap, activeStepId, 60,
                             "llm", "failed", "模型调用失败", "模型调用未能正常完成", failedDetail);
                 }
                 if (isClientConnected.get()) {
