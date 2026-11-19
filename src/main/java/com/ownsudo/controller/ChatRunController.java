@@ -2,14 +2,12 @@ package com.ownsudo.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.ownsudo.security.AgentApiKeyFilter;
 import com.ownsudo.service.ChatRunRecorder;
 import com.ownsudo.service.LlmClientService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
-import java.sql.Timestamp;
 import java.util.*;
 
 @RestController
@@ -120,15 +118,34 @@ public class ChatRunController {
                 if (key.startsWith("reasoning") || key.startsWith("analysis") ||
                         key.startsWith("chain_of_thought") || key.startsWith("internal_thought") ||
                         key.startsWith("scratchpad") || key.equals("thoughts")) return;
-                safe.set(entry.getKey(), sanitize(entry.getValue()));
+                JsonNode child = entry.getValue();
+                if (child != null && child.isObject()) {
+                    String channel = child.path("channel").asText(child.path("type").asText(child.path("kind").asText("")));
+                    String role = child.path("role").asText("");
+                    if ((role.isBlank() || "assistant".equalsIgnoreCase(role)) && isInternalChannel(channel)) return;
+                }
+                safe.set(entry.getKey(), sanitize(child));
             });
             return safe;
         }
         if (value.isArray()) {
             var safe = mapper.createArrayNode();
-            value.forEach(item -> safe.add(sanitize(item)));
+            value.forEach(item -> {
+                if (item != null && item.isObject()) {
+                    String channel = item.path("channel").asText(item.path("type").asText(item.path("kind").asText("")));
+                    String role = item.path("role").asText("");
+                    if ((role.isBlank() || "assistant".equalsIgnoreCase(role)) && isInternalChannel(channel)) return;
+                }
+                safe.add(sanitize(item));
+            });
             return safe;
         }
         return value.deepCopy();
+    }
+
+    private boolean isInternalChannel(String channel) {
+        String normalized = channel == null ? "" : channel.toLowerCase(Locale.ROOT);
+        return normalized.contains("analysis") || normalized.contains("reasoning")
+                || normalized.contains("thought") || normalized.contains("internal");
     }
 }
