@@ -171,6 +171,18 @@ The heartbeat interval should be comfortably shorter than the lease duration. Ne
 | P4 | Evaluation | Versioned datasets, evaluators, experiment runs, baseline comparison and regression gates |
 | P5 | Studio | Agent registry, run explorer, trace waterfall and Evaluation workbench |
 
+## Live chat prompt capture
+
+The built-in chat endpoint can emit inspectable model-request and tool-execution details to the conversation timeline. To capture prompt/response bodies, explicitly set this environment variable on the backend process before starting the service:
+
+```bash
+OWNAGENT_TRACE_CAPTURE_CONTENT=1
+```
+
+When enabled, the chat trace records the actual assembled message list sent to each model round (system prompt after memory/RAG/context injection, conversation history, tool messages), the model's returned assistant message/tool calls, tool arguments/results, and the final streamed answer. Captured payloads are bounded before being sent to the browser. When disabled (the default), model-call lifecycle and metadata are still emitted, but message bodies are omitted.
+
+**Privacy:** prompts, history, retrieved context and tool results may contain personal or confidential data. Enable capture only in a controlled environment, do not share traces without review/redaction, and turn it off after debugging. This feature does not expose hidden chain-of-thought; it records provider request/response payloads and explicit tool I/O only.
+
 ## Honest implementation boundaries
 
 - Approval-required Actions persist PENDING / APPROVED / REJECTED decisions. Approval moves an Action to READY; rejection moves it to DENIED. The original REQUIRE_APPROVAL policy decision is retained for audit.

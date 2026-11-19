@@ -98,6 +98,21 @@ The example asks the model to research OwnAgent's execution semantics. The model
 
 The Action lifecycle and tool metadata are persisted by OwnAgent. The model request goes directly from the example to the configured LLM endpoint; the example separately submits a span containing provider-reported token usage to OwnAgent. LLM and Action failures are recorded with `status="ERROR"` when their execution raises. Trace ingestion is best-effort: a telemetry outage is reported to stderr and does not replace the Agent's actual result.
 
+### Inspect the actual prompt and tool execution
+
+By default, the demo records span names, model/provider metadata, timing, status, and provider-reported token usage. It does **not** persist prompt or response bodies.
+
+To deliberately capture the exact message list sent to the model, the model response, tool schema, tool arguments, and tool result in span attributes, opt in before running the demo:
+
+```bash
+export OWNAGENT_TRACE_CAPTURE_CONTENT=1
+python examples/demo_agent.py
+```
+
+Content capture is disabled unless this variable is set to `1`, `true`, or `yes`. Captured values are truncated before ingestion to keep span attributes bounded. Prompts and tool results may contain user data, credentials, or other secrets: enable this only in a controlled environment, review/redact data before sharing a Trace, and turn it off when no longer needed. The Studio labels each captured section separately; if content was not captured, it says so rather than reconstructing it from the span name.
+
+For your own Agent, add the same structured fields to the `attributes` passed to `create_trace_span()` (or `trace_span()`): `prompt_messages`, `model_response`, `tool_schema`, `tool_arguments`, and `tool_result`. OwnAgent does not intercept arbitrary provider requests automatically; your Agent integration must explicitly submit these values.
+
 ## SDK API
 
 - `register_tool(tool_name, description, input_schema, risk_level="LOW", enabled=True)` — requires `tool_admin_api_key`

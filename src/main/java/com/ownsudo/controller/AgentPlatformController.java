@@ -416,6 +416,7 @@ public class AgentPlatformController {
         emitter.onError(e -> isClientConnected.set(false));
 
         executor.submit(() -> {
+            AtomicReference<String> activeModelStepId = new AtomicReference<>(null);
             Map<Integer, Object> traceStepsMap = new ConcurrentHashMap<>();
             List<Map<String, Object>> toolCallsList = new CopyOnWriteArrayList<>();
             AtomicReference<Object> approvalTicketRef = new AtomicReference<>(null);
@@ -832,11 +833,46 @@ public class AgentPlatformController {
 
                 while (currentDepth <= 3 && isClientConnected.get()) {
                     try {
+                        String modelStepId = "model-call-round-" + currentDepth;
+                        activeModelStepId.set(modelStepId);
+                        Map<String, Object> modelRequestDetail = new LinkedHashMap<>();
+                        modelRequestDetail.put("model", rawModel != null ? rawModel : llmClientService.getConfig("LLM_MODEL", "configured-model"));
+                        modelRequestDetail.put("provider", llmClientService.getConfig("LLM_PROVIDER", "configured-provider"));
+                        modelRequestDetail.put("model_step", currentDepth);
+                        modelRequestDetail.put("tool_count", toolDefs.size());
+                        if (isExecutionContentCaptureEnabled()) {
+                            modelRequestDetail.put("prompt_messages", boundedTraceValue(messages));
+                            modelRequestDetail.put("tool_schema", boundedTraceValue(toolDefs));
+                        } else {
+                            modelRequestDetail.put("content_capture", "disabled");
+                        }
+                        sendExecutionEvent(emitter, isClientConnected, traceStepsMap, modelStepId, 40 + currentDepth,
+                                "llm", "running", "模型请求 · 第 " + currentDepth + " 轮",
+                                "正在向模型发送当前上下文与可用工具定义", modelRequestDetail);
+
                         com.fasterxml.jackson.databind.JsonNode compResponse =
                                 llmClientService.callChatCompletionsWithTools(rawModel, temperature, messages, toolDefs, isClientConnected);
 
+                        if (compResponse == null || !compResponse.has("choices") || compResponse.get("choices").size() == 0) {
+                            Map<String, Object> emptyResponseDetail = new LinkedHashMap<>(modelRequestDetail);
+                            emptyResponseDetail.put("error", "模型未返回有效 choices");
+                            sendExecutionEvent(emitter, isClientConnected, traceStepsMap, modelStepId, 40 + currentDepth,
+                                    "llm", "failed", "模型响应为空 · 第 " + currentDepth + " 轮",
+                                    "Provider 没有返回可用的模型消息", emptyResponseDetail);
+                            activeModelStepId.compareAndSet(modelStepId, null);
+                        }
+
                         if (compResponse != null && compResponse.has("choices") && compResponse.get("choices").size() > 0) {
                             com.fasterxml.jackson.databind.JsonNode messageNode = compResponse.get("choices").get(0).path("message");
+                            Map<String, Object> modelResponseDetail = new LinkedHashMap<>(modelRequestDetail);
+                            modelResponseDetail.put("model_response", boundedTraceValue(objectMapper.convertValue(messageNode, Object.class)));
+                            if (compResponse.has("usage")) modelResponseDetail.put("usage", objectMapper.convertValue(compResponse.get("usage"), Object.class));
+                            if (compResponse.has("model")) modelResponseDetail.put("actual_model", compResponse.path("model").asText());
+                            sendExecutionEvent(emitter, isClientConnected, traceStepsMap, modelStepId, 40 + currentDepth,
+                                    "llm", "done", "模型响应 · 第 " + currentDepth + " 轮",
+                                    messageNode.has("tool_calls") ? "模型返回了工具调用请求" : "模型返回了文本内容",
+                                    modelResponseDetail);
+                            activeModelStepId.compareAndSet(modelStepId, null);
 
                             if (messageNode.has("tool_calls") && messageNode.get("tool_calls").isArray() && messageNode.get("tool_calls").size() > 0) {
                                 com.fasterxml.jackson.databind.JsonNode toolCallsArray = messageNode.get("tool_calls");
@@ -884,6 +920,29 @@ public class AgentPlatformController {
                                         } catch (IOException ignored) {}
                                     }
 
+                                    Map<String, Object> toolStartDetail = new LinkedHashMap<>();
+                                    toolStartDetail.put("functionName", functionName);
+                                    toolStartDetail.put("toolCallId", callId);
+                                    toolStartDetail.put("modelStep", currentDepth);
+                                    toolStartDetail.put("tool_arguments", boundedTraceValue(parseJsonOrText(functionArgs)));
+                                    Map<String, Object> toolStartPayload = new LinkedHashMap<>();
+                                    toolStartPayload.put("stepId", callId);
+                                    toolStartPayload.put("seq", 5);
+                                    toolStartPayload.put("phase", "skill");
+                                    toolStartPayload.put("status", "running");
+                                    toolStartPayload.put("leftTitle", "正在执行工具: " + functionName);
+                                    toolStartPayload.put("leftSummary", "模型已发起工具调用，执行端正在处理");
+                                    toolStartPayload.put("title", "正在执行工具: " + functionName);
+                                    toolStartPayload.put("rightTitle", functionName);
+                                    toolStartPayload.put("rightSubtitle", "工具调用已接收，正在执行");
+                                    toolStartPayload.put("rightDetail", toolStartDetail);
+                                    toolStartPayload.put("timestamp", System.currentTimeMillis());
+                                    if (isClientConnected.get()) {
+                                        try {
+                                            emitter.send(SseEmitter.event().name("agent_step").data(objectMapper.writeValueAsString(toolStartPayload)));
+                                        } catch (IOException ignored) {}
+                                    }
+
                                     long toolStart = System.currentTimeMillis();
                                     ToolExecutor.ToolExecutionResult toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
                                     long toolDuration = System.currentTimeMillis() - toolStart;
@@ -924,17 +983,31 @@ public class AgentPlatformController {
                                         try {
                                             Map<String, Object> toolPayloadMap = new LinkedHashMap<>();
                                             toolPayloadMap.put("tool", functionName);
-                                            toolPayloadMap.put("parameters", functionArgs);
+                                            toolPayloadMap.put("id", callId);
+                                            toolPayloadMap.put("toolCallId", callId);
+                                            toolPayloadMap.put("modelStep", currentDepth);
+                                            toolPayloadMap.put("parameters", boundedTraceValue(parseJsonOrText(functionArgs)));
+                                            toolPayloadMap.put("tool_arguments", boundedTraceValue(parseJsonOrText(functionArgs)));
                                             toolPayloadMap.put("status", toolResult.isSuccess() ? "success" : "error");
                                             toolPayloadMap.put("duration", toolDurationStr);
-                                            toolPayloadMap.put("result", toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage());
+                                            Map<String, Object> savedToolResult = new LinkedHashMap<>();
+                                            savedToolResult.put("success", toolResult.isSuccess());
+                                            if (toolResult.isSuccess()) {
+                                                savedToolResult.put("data", toolResult.getData());
+                                            } else {
+                                                savedToolResult.put("errorType", toolResult.getErrorType());
+                                                savedToolResult.put("message", toolResult.getErrorMessage());
+                                                savedToolResult.put("retryable", toolResult.isRetryable());
+                                            }
+                                            toolPayloadMap.put("tool_result", boundedTraceValue(savedToolResult));
+                                            toolPayloadMap.put("result", boundedTraceValue(toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage()));
                                             toolCallsList.add(toolPayloadMap);
                                             emitter.send(SseEmitter.event().name("tool").data(objectMapper.writeValueAsString(toolPayloadMap)));
 
                                             // 同步下发高阶 agent_step 事件，驱动双视窗实时同步
                                             Map<String, Object> toolStepPayload = new LinkedHashMap<>();
                                             toolStepPayload.put("seq", 5);
-                                            toolStepPayload.put("stepId", "tool-" + functionName + "-" + callId);
+                                            toolStepPayload.put("stepId", callId); // Match the `tool` SSE event identity so the UI merges, rather than duplicates, this call.
                                             toolStepPayload.put("phase", "skill");
                                             toolStepPayload.put("status", toolResult.isSuccess() ? "done" : "failed");
                                             toolStepPayload.put("leftTitle", "技能调度: " + functionName);
@@ -943,11 +1016,27 @@ public class AgentPlatformController {
                                             toolStepPayload.put("rightSubtitle", "耗时: " + toolDurationStr + " · 状态: " + (toolResult.isSuccess() ? "SUCCESS" : "ERROR"));
                                             Map<String, Object> toolDetail = new LinkedHashMap<>();
                                             toolDetail.put("functionName", functionName);
-                                            toolDetail.put("parameters", functionArgs);
-                                            toolDetail.put("result", toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage());
+                                            toolDetail.put("toolCallId", callId);
+                                            toolDetail.put("modelStep", currentDepth);
+                                            toolDetail.put("tool_arguments", boundedTraceValue(parseJsonOrText(functionArgs)));
+                                            Map<String, Object> toolResultTrace = new LinkedHashMap<>();
+                                            toolResultTrace.put("success", toolResult.isSuccess());
+                                            if (toolResult.isSuccess()) {
+                                                toolResultTrace.put("data", toolResult.getData());
+                                            } else {
+                                                toolResultTrace.put("errorType", toolResult.getErrorType());
+                                                toolResultTrace.put("message", toolResult.getErrorMessage());
+                                                toolResultTrace.put("retryable", toolResult.isRetryable());
+                                            }
+                                            toolDetail.put("tool_result", boundedTraceValue(toolResultTrace));
+                                            toolDetail.put("parameters", boundedTraceValue(parseJsonOrText(functionArgs)));
+                                            toolDetail.put("result", boundedTraceValue(toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage()));
                                             toolDetail.put("durationMs", toolDuration);
                                             toolStepPayload.put("rightDetail", toolDetail);
                                             toolStepPayload.put("timestamp", System.currentTimeMillis());
+                                            // Persist the full tool event alongside model events. The map key is
+                                            // only a unique storage key; the event keeps its semantic seq=5.
+                                            traceStepsMap.put(1000 + traceStepsMap.size(), toolStepPayload);
                                             emitter.send(SseEmitter.event().name("agent_step").data(objectMapper.writeValueAsString(toolStepPayload)));
 
                                             // 若触发生产级高危写操作安全拦截，向前端推送 approval_required 事件
@@ -992,6 +1081,21 @@ public class AgentPlatformController {
                             }
                         }
                     } catch (Exception e) {
+                        Map<String, Object> failedModelDetail = new LinkedHashMap<>();
+                        failedModelDetail.put("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                        failedModelDetail.put("error_type", e.getClass().getSimpleName());
+                        failedModelDetail.put("model_step", currentDepth);
+                        if (isExecutionContentCaptureEnabled()) {
+                            failedModelDetail.put("prompt_messages", boundedTraceValue(messages));
+                        } else {
+                            failedModelDetail.put("content_capture", "disabled");
+                        }
+                        String failedStepId = activeModelStepId.getAndSet(null);
+                        if (failedStepId != null) {
+                            sendExecutionEvent(emitter, isClientConnected, traceStepsMap, failedStepId,
+                                    40 + currentDepth, "llm", "failed", "模型请求失败 · 第 " + currentDepth + " 轮",
+                                    "模型调用发生异常，已记录真实错误", failedModelDetail);
+                        }
                         System.err.println("[ToolLoop] 工具调用循环检查异常: " + e.getMessage());
                     }
                     break;
@@ -1036,6 +1140,19 @@ public class AgentPlatformController {
                 java.util.concurrent.atomic.AtomicBoolean hasRealUsageRef = new java.util.concurrent.atomic.AtomicBoolean(false);
                 java.util.concurrent.atomic.AtomicLong firstTokenTimeRef = new java.util.concurrent.atomic.AtomicLong(0);
 
+                String finalModelStepId = "final-response-" + UUID.randomUUID().toString().substring(0, 8);
+                activeModelStepId.set(finalModelStepId);
+                Map<String, Object> finalRequestDetail = new LinkedHashMap<>();
+                finalRequestDetail.put("model", rawModel != null ? rawModel : llmClientService.getConfig("LLM_MODEL", "configured-model"));
+                finalRequestDetail.put("model_step", "final");
+                if (isExecutionContentCaptureEnabled()) {
+                    finalRequestDetail.put("prompt_messages", boundedTraceValue(messages));
+                } else {
+                    finalRequestDetail.put("content_capture", "disabled");
+                }
+                sendExecutionEvent(emitter, isClientConnected, traceStepsMap, finalModelStepId, 60,
+                        "llm", "running", "最终回答生成", "正在将工具结果和上下文提交给模型", finalRequestDetail);
+
                 ModelGatewayService.FailoverContext failoverCtx = modelGatewayService.streamChatWithFailover(
                         rawModel,
                         temperature,
@@ -1071,6 +1188,21 @@ public class AgentPlatformController {
 
                 long durationMs = System.currentTimeMillis() - startTime;
                 String durationStr = String.format(Locale.US, "%.2fs", durationMs / 1000.0);
+                Map<String, Object> finalResponseDetail = new LinkedHashMap<>(finalRequestDetail);
+                finalResponseDetail.put("model_response", boundedTraceValue(replyBuffer.toString()));
+                finalResponseDetail.put("durationMs", durationMs);
+                if (hasRealUsageRef.get()) {
+                    finalResponseDetail.put("usage", Map.of(
+                            "prompt_tokens", promptTokensRef.get(),
+                            "completion_tokens", completionTokensRef.get(),
+                            "usage_reported", true));
+                } else {
+                    finalResponseDetail.put("usage_reported", false);
+                }
+                finalResponseDetail.put("provider_route", failoverCtx.triggered ? failoverCtx.fallbackChannel : "primary");
+                sendExecutionEvent(emitter, isClientConnected, traceStepsMap, finalModelStepId, 60,
+                        "llm", "done", "最终回答生成", "模型流式回答已完成", finalResponseDetail);
+                activeModelStepId.compareAndSet(finalModelStepId, null);
 
                 // 7. 解决引用保存 Bug：setCitationsJson 必须在 save 之前赋值，确保持久化
                 ChatMessageEntity asstMsg = new ChatMessageEntity();
@@ -1197,6 +1329,14 @@ public class AgentPlatformController {
                 }
 
             } catch (Exception e) {
+                String activeStepId = activeModelStepId.getAndSet(null);
+                if (activeStepId != null) {
+                    Map<String, Object> failedDetail = new LinkedHashMap<>();
+                    failedDetail.put("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                    failedDetail.put("error_type", e.getClass().getSimpleName());
+                    sendExecutionEvent(emitter, isClientConnected, traceStepsMap, activeStepId, 60,
+                            "llm", "failed", "模型调用失败", "模型调用未能正常完成", failedDetail);
+                }
                 if (isClientConnected.get()) {
                     try {
                         String errMsg = "\n\n【调用异常】" + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
@@ -1418,6 +1558,54 @@ public class AgentPlatformController {
     public ResponseEntity<Map<String, Object>> resetFailover() {
         modelGatewayService.resetCircuit();
         return ResponseEntity.ok(modelGatewayService.getGatewayStatus());
+    }
+
+    private boolean isExecutionContentCaptureEnabled() {
+        String value = System.getenv("OWNAGENT_TRACE_CAPTURE_CONTENT");
+        return value != null && Set.of("1", "true", "yes").contains(value.trim().toLowerCase(Locale.ROOT));
+    }
+
+    private Object boundedTraceValue(Object value) {
+        if (value == null) return null;
+        try {
+            String json = objectMapper.writeValueAsString(value);
+            if (json.length() <= 24000) return value;
+            return json.substring(0, 24000) + " … [truncated by OwnAgent]";
+        } catch (Exception ignored) {
+            String text = String.valueOf(value);
+            return text.length() <= 24000 ? text : text.substring(0, 24000) + " … [truncated by OwnAgent]";
+        }
+    }
+
+    private Object parseJsonOrText(String value) {
+        if (value == null) return null;
+        try { return objectMapper.readValue(value, Object.class); }
+        catch (Exception ignored) { return value; }
+    }
+
+    private void sendExecutionEvent(SseEmitter emitter, AtomicBoolean isConnected,
+                                    Map<Integer, Object> traceStepsMap, String stepId,
+                                    int seq, String phase, String status, String title,
+                                    String subtitle, Map<String, Object> details) {
+        if (isConnected != null && !isConnected.get()) return;
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("stepId", stepId);
+        payload.put("seq", seq);
+        payload.put("phase", phase);
+        payload.put("status", status);
+        payload.put("leftTitle", title);
+        payload.put("leftSummary", subtitle);
+        payload.put("title", title);
+        payload.put("rightTitle", title);
+        payload.put("rightSubtitle", subtitle);
+        payload.put("rightDetail", details);
+        payload.put("timestamp", System.currentTimeMillis());
+        if (traceStepsMap != null) traceStepsMap.put(seq, payload);
+        try {
+            String json = objectMapper.writeValueAsString(payload);
+            emitter.send(SseEmitter.event().name("agent_step").data(json));
+            emitter.send(SseEmitter.event().name("trace_step").data(json));
+        } catch (Exception ignored) {}
     }
 
     /**
