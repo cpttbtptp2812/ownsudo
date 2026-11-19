@@ -57,7 +57,7 @@ def main() -> None:
         }
     ]
 
-    with OwnAgentClient(ownagent_url, ownagent_key) as observer:
+    with OwnAgentClient(ownagent_url, ownagent_key) as observer:  # noqa: SIM117
         with httpx.Client(
             base_url=provider_url.rstrip("/") + "/",
             headers={"Authorization": f"Bearer {provider_key}"},
