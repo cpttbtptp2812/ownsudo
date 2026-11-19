@@ -39,7 +39,7 @@ public class OtlpTraceController {
         this.mapper = mapper;
     }
 
-    @PostMapping(path = "/v1/traces", consumes = {MediaType.APPLICATION_JSON_VALUE, "application/x-protobuf"})
+    @PostMapping(path = "/v1/traces", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> ingest(
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
             @RequestBody(required = false) JsonNode request) {
