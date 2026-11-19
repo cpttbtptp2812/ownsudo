@@ -71,6 +71,31 @@ python examples/observability_agent.py
 
 To group multiple runs under a stable conversation, also set `OWNAGENT_SESSION_ID`. To deliberately persist exact prompt messages, model responses, tool arguments, and tool results, explicitly opt in with `OWNAGENT_TRACE_CAPTURE_CONTENT=1`. Keep this disabled for normal use and redact sensitive data before sharing traces.
 
+## Automatic instrumentation with OpenInference
+
+If your Agent already uses the OpenAI Python SDK, OpenInference can create model spans automatically. The example exports standard OTLP/JSON directly to OwnAgent; it does not route model traffic through OwnAgent.
+
+Install the optional extras from this repository:
+
+\`\`\`bash
+cd sdk/python
+python -m pip install -e ".[otel-json,openinference-openai]" "openai>=2.8"
+\`\`\`
+
+Configure the endpoint and keys, then run the example:
+
+\`\`\`bash
+export OWNAGENT_OTLP_ENDPOINT=http://localhost:8080/api/v1/otlp/v1/traces
+export OWNAGENT_AGENT_API_KEY=oa_live_...
+export OPENAI_API_KEY=...
+export OPENAI_MODEL=gpt-4.1-mini
+python examples/openinference_openai.py
+\`\`\`
+
+The example places \`ownagent.run.id\` and \`session.id\` on the OpenTelemetry Resource so automatically created model spans are grouped into one OwnAgent Run. Prompt and response contents are hidden by default with OpenInference \`TraceConfig\`; set \`OWNAGENT_TRACE_CAPTURE_CONTENT=1\` only in a controlled, redacted test environment to opt in.
+
+For other frameworks, install the matching optional instrumentation package and use the same OTLP/JSON exporter. Available upstream instrumentors include LangChain, OpenAI Agents, LlamaIndex, CrewAI, Haystack, PydanticAI, and MCP. Their versions and framework compatibility are maintained upstream; OwnAgent consumes the resulting OpenTelemetry spans rather than vendoring each framework adapter.
+
 ## Quick start: run a local Python tool
 
 Start OwnAgent backend and configure these environment variables:
