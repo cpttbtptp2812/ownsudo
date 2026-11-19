@@ -44,9 +44,9 @@ class TraceSpan:
             raise ValueError("name must not be empty")
         self.client = client
         self.trace_id = trace_id
+        active = _active_span.get()
         self.run_id = run_id or (active[3] if active and active[0] == trace_id and active[2] == id(client) else None)
         self.span_id = span_id or uuid4().hex
-        active = _active_span.get()
         self.parent_span_id = parent_span_id or (
             active[1] if active and active[0] == trace_id and active[2] == id(client) else None
         )
