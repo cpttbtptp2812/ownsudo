@@ -963,10 +963,21 @@ public class AgentPlatformController {
                                             toolPayloadMap.put("id", callId);
                                             toolPayloadMap.put("toolCallId", callId);
                                             toolPayloadMap.put("modelStep", currentDepth);
-                                            toolPayloadMap.put("parameters", functionArgs);
+                                            toolPayloadMap.put("parameters", boundedTraceValue(parseJsonOrText(functionArgs)));
+                                            toolPayloadMap.put("tool_arguments", boundedTraceValue(parseJsonOrText(functionArgs)));
                                             toolPayloadMap.put("status", toolResult.isSuccess() ? "success" : "error");
                                             toolPayloadMap.put("duration", toolDurationStr);
-                                            toolPayloadMap.put("result", toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage());
+                                            Map<String, Object> savedToolResult = new LinkedHashMap<>();
+                                            savedToolResult.put("success", toolResult.isSuccess());
+                                            if (toolResult.isSuccess()) {
+                                                savedToolResult.put("data", toolResult.getData());
+                                            } else {
+                                                savedToolResult.put("errorType", toolResult.getErrorType());
+                                                savedToolResult.put("message", toolResult.getErrorMessage());
+                                                savedToolResult.put("retryable", toolResult.isRetryable());
+                                            }
+                                            toolPayloadMap.put("tool_result", boundedTraceValue(savedToolResult));
+                                            toolPayloadMap.put("result", boundedTraceValue(toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage()));
                                             toolCallsList.add(toolPayloadMap);
                                             emitter.send(SseEmitter.event().name("tool").data(objectMapper.writeValueAsString(toolPayloadMap)));
 
@@ -1154,10 +1165,14 @@ public class AgentPlatformController {
                 Map<String, Object> finalResponseDetail = new LinkedHashMap<>(finalRequestDetail);
                 finalResponseDetail.put("model_response", boundedTraceValue(replyBuffer.toString()));
                 finalResponseDetail.put("durationMs", durationMs);
-                finalResponseDetail.put("usage", Map.of(
-                        "prompt_tokens", promptTokensRef.get(),
-                        "completion_tokens", completionTokensRef.get(),
-                        "usage_reported", hasRealUsageRef.get()));
+                if (hasRealUsageRef.get()) {
+                    finalResponseDetail.put("usage", Map.of(
+                            "prompt_tokens", promptTokensRef.get(),
+                            "completion_tokens", completionTokensRef.get(),
+                            "usage_reported", true));
+                } else {
+                    finalResponseDetail.put("usage_reported", false);
+                }
                 finalResponseDetail.put("provider_route", failoverCtx.triggered ? failoverCtx.fallbackChannel : "primary");
                 sendExecutionEvent(emitter, isClientConnected, traceStepsMap, finalModelStepId, 60,
                         "llm", "done", "最终回答生成", "模型流式回答已完成", finalResponseDetail);
