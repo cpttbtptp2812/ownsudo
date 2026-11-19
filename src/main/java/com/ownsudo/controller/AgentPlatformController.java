@@ -416,6 +416,7 @@ public class AgentPlatformController {
         emitter.onError(e -> isClientConnected.set(false));
 
         executor.submit(() -> {
+            AtomicReference<String> activeModelStepId = new AtomicReference<>(null);
             Map<Integer, Object> traceStepsMap = new ConcurrentHashMap<>();
             List<Map<String, Object>> toolCallsList = new CopyOnWriteArrayList<>();
             AtomicReference<Object> approvalTicketRef = new AtomicReference<>(null);
@@ -833,6 +834,7 @@ public class AgentPlatformController {
                 while (currentDepth <= 3 && isClientConnected.get()) {
                     try {
                         String modelStepId = "model-call-round-" + currentDepth;
+                        activeModelStepId.set(modelStepId);
                         Map<String, Object> modelRequestDetail = new LinkedHashMap<>();
                         modelRequestDetail.put("model", rawModel != null ? rawModel : llmClientService.getConfig("LLM_MODEL", "configured-model"));
                         modelRequestDetail.put("provider", llmClientService.getConfig("LLM_PROVIDER", "configured-provider"));
@@ -861,6 +863,7 @@ public class AgentPlatformController {
                                     "llm", "done", "模型响应 · 第 " + currentDepth + " 轮",
                                     messageNode.has("tool_calls") ? "模型返回了工具调用请求" : "模型返回了文本内容",
                                     modelResponseDetail);
+                            activeModelStepId.compareAndSet(modelStepId, null);
 
                             if (messageNode.has("tool_calls") && messageNode.get("tool_calls").isArray() && messageNode.get("tool_calls").size() > 0) {
                                 com.fasterxml.jackson.databind.JsonNode toolCallsArray = messageNode.get("tool_calls");
@@ -1044,6 +1047,7 @@ public class AgentPlatformController {
                                 "model-call-round-" + currentDepth,
                                 40 + currentDepth, "llm", "failed", "模型请求失败 · 第 " + currentDepth + " 轮",
                                 "模型调用发生异常，已记录真实错误", failedModelDetail);
+                        activeModelStepId.set(null);
                         System.err.println("[ToolLoop] 工具调用循环检查异常: " + e.getMessage());
                     }
                     break;
@@ -1089,6 +1093,7 @@ public class AgentPlatformController {
                 java.util.concurrent.atomic.AtomicLong firstTokenTimeRef = new java.util.concurrent.atomic.AtomicLong(0);
 
                 String finalModelStepId = "final-response-" + UUID.randomUUID().toString().substring(0, 8);
+                activeModelStepId.set(finalModelStepId);
                 Map<String, Object> finalRequestDetail = new LinkedHashMap<>();
                 finalRequestDetail.put("model", rawModel != null ? rawModel : llmClientService.getConfig("LLM_MODEL", "configured-model"));
                 finalRequestDetail.put("model_step", "final");
@@ -1145,6 +1150,7 @@ public class AgentPlatformController {
                 finalResponseDetail.put("provider_route", failoverCtx.triggered ? failoverCtx.fallbackChannel : "primary");
                 sendExecutionEvent(emitter, isClientConnected, finalModelStepId, 60,
                         "llm", "done", "最终回答生成", "模型流式回答已完成", finalResponseDetail);
+                activeModelStepId.compareAndSet(finalModelStepId, null);
 
                 // 7. 解决引用保存 Bug：setCitationsJson 必须在 save 之前赋值，确保持久化
                 ChatMessageEntity asstMsg = new ChatMessageEntity();
@@ -1271,6 +1277,14 @@ public class AgentPlatformController {
                 }
 
             } catch (Exception e) {
+                String activeStepId = activeModelStepId.getAndSet(null);
+                if (activeStepId != null) {
+                    Map<String, Object> failedDetail = new LinkedHashMap<>();
+                    failedDetail.put("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                    failedDetail.put("error_type", e.getClass().getSimpleName());
+                    sendExecutionEvent(emitter, isClientConnected, activeStepId, 60,
+                            "llm", "failed", "模型调用失败", "模型调用未能正常完成", failedDetail);
+                }
                 if (isClientConnected.get()) {
                     try {
                         String errMsg = "\n\n【调用异常】" + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
