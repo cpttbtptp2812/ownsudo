@@ -35,7 +35,7 @@ class ChatRunRecorderTest {
         recorder.complete(17, 9, true, "COMPLETED");
         recorder.clear();
 
-        verify(jdbc).update(contains("INSERT INTO chat_agent_run"), any(Object[].class));
+        verify(jdbc).update(contains("INSERT INTO chat_agent_run\n"), any(Object[].class));
         verify(jdbc, atLeast(4)).update(contains("INSERT INTO chat_agent_run_event"), any(Object[].class));
         verify(jdbc, atLeast(2)).update(contains("INSERT INTO chat_agent_run_span"), any(Object[].class));
         ArgumentCaptor<Object[]> updateArgs = ArgumentCaptor.forClass(Object[].class);
