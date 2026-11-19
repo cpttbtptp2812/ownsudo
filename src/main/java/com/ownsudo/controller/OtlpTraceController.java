@@ -110,7 +110,7 @@ public class OtlpTraceController {
             case "5", "SPAN_KIND_CONSUMER" -> "CONSUMER";
             default -> "INTERNAL";
         };
-        String runId = firstText(attributes, "ownagent.run.id", "session.id", "conversation.id");
+        String runId = firstText(attributes, "ownagent.run.id");
         String usageSource = input != null || output != null || total != null ? "PROVIDER" : "MISSING";
         return new IngestTraceSpanRequest(traceId, spanId, blankToNull(text(span, "parentSpanId")),
                 runId, name, kind, status, start, end, input, output, total, usageSource, attributes);
