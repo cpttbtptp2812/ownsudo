@@ -64,25 +64,24 @@ public class AgentRunPersistenceService {
         String name = span.getName() == null || span.getName().isBlank() ? "Agent run" : span.getName();
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
 
-        Map<String, Object> values = Map.of(
-                "id", runPk,
-                "agentId", agentId,
-                "runId", runId,
-                "traceId", span.getTraceId(),
-                "sessionId", sessionId == null ? "" : sessionId,
-                "conversationId", conversationId == null ? "" : conversationId,
-                "name", name,
-                "status", status,
-                "startedAt", startedAt,
-                "endedAt", endedAt,
-                "duration", duration,
-                "spanCount", spanCount,
-                "errorCount", errorCount,
-                "inputTokens", aggregate.get("input_tokens"),
-                "outputTokens", aggregate.get("output_tokens"),
-                "totalTokens", aggregate.get("total_tokens"),
-                "usageSource", usageSource(aggregate)
-        );
+        Map<String, Object> values = new java.util.HashMap<>();
+        values.put("id", runPk);
+        values.put("agentId", agentId);
+        values.put("runId", runId);
+        values.put("traceId", span.getTraceId());
+        values.put("sessionId", sessionId);
+        values.put("conversationId", conversationId);
+        values.put("name", name);
+        values.put("status", status);
+        values.put("startedAt", startedAt);
+        values.put("endedAt", endedAt);
+        values.put("duration", duration);
+        values.put("spanCount", spanCount);
+        values.put("errorCount", errorCount);
+        values.put("inputTokens", aggregate.get("input_tokens"));
+        values.put("outputTokens", aggregate.get("output_tokens"));
+        values.put("totalTokens", aggregate.get("total_tokens"));
+        values.put("usageSource", usageSource(aggregate));
         persistRun(values, now);
 
         String eventType = span.getEndedAt() == null ? "SPAN_STARTED"
