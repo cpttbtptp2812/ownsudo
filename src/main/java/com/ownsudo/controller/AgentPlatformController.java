@@ -959,7 +959,15 @@ public class AgentPlatformController {
 
                                     chatRunRecorder.recordToolStart(callId, functionName, parseJsonOrText(functionArgs) instanceof Map<?, ?> argsMap ? (Map<String, Object>) argsMap : Map.of("raw", functionArgs));
                                     long toolStart = System.currentTimeMillis();
-                                    ToolExecutor.ToolExecutionResult toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
+                                    ToolExecutor.ToolExecutionResult toolResult;
+                                    try {
+                                        toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
+                                    } catch (RuntimeException toolError) {
+                                        long failedDuration = System.currentTimeMillis() - toolStart;
+                                        chatRunRecorder.recordToolResult(callId, functionName, false, failedDuration, null,
+                                                toolError.getMessage() == null ? toolError.getClass().getSimpleName() : toolError.getMessage());
+                                        throw toolError;
+                                    }
                                     long toolDuration = System.currentTimeMillis() - toolStart;
                                     chatRunRecorder.recordToolResult(callId, functionName, toolResult.isSuccess(), toolDuration, boundedTraceValue(toolResult.isSuccess() ? toolResult.getData() : null), toolResult.isSuccess() ? null : toolResult.getErrorMessage());
                                     String toolDurationStr = toolDuration + "ms";
