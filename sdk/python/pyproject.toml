@@ -20,7 +20,7 @@ otel-json = [
 ]
 openinference-openai = ["openinference-instrumentation-openai>=0.1"]
 openinference-langchain = ["openinference-instrumentation-langchain>=0.1"]
-openinference-openai-agents = ["openinference-instrumentation-openai-agents>=2.0"]
+openinference-openai-agents = ["openinference-instrumentation-openai-agents[instruments]>=2.0"]
 openinference-mcp = ["openinference-instrumentation-mcp>=2.0"]
 
 [tool.hatch.build.targets.wheel]
