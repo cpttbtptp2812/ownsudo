@@ -15,7 +15,9 @@ The observability API now materializes a queryable Run index from accepted trace
 - `agent_run` stores the Run-level projection; `agent_run_event` stores append-only span lifecycle observations; `agent_trace_span` remains the detailed span source of truth.
 - Provider token totals are aggregated only from spans marked `PROVIDER`; estimated or missing usage is never represented as provider usage.
 
-See [docs/run-history.md](docs/run-history.md). The additive V7–V10 Flyway migrations create Trace, Run, persisted Judge evaluation history, and agent-scoped Promptfoo report tables; they are applied by the production profile. No production database was modified as part of this change. See [docs/integrations.md](docs/integrations.md) for the upstream reuse register, OTLP/HTTP JSON and Protobuf ingestion, Promptfoo report import/history, current export hooks, license boundaries, and recommended DeepEval / MCP Inspector integrations.
+Built-in chat executions now create their own persisted Run / Trace records as the stream progresses. `GET /api/chat/runs?sessionId=...` lists them, `GET /api/chat/runs/{runId}` returns ordered events and spans, and `POST /api/chat/runs/{runId}/judge` evaluates the stored evidence. Built-in runs remain separate from external Agent Runs when no real Agent identity is supplied; the chat SSE stream emits the Run and Trace IDs, and the Run Explorer refreshes active runs.
+
+See [docs/run-history.md](docs/run-history.md). The additive V7–V11 Flyway migrations create external Trace / Run history, persisted external Judge evaluations, Promptfoo report storage, and built-in chat Run / event / span / evaluation tables. They are applied by the production profile. No production database was modified as part of this change. See [docs/integrations.md](docs/integrations.md) for the upstream reuse register, OTLP/HTTP JSON and Protobuf ingestion, Promptfoo report import/history, current export hooks, license boundaries, and recommended DeepEval / MCP Inspector integrations.
 
 ## OpenTelemetry and Promptfoo report APIs
 
