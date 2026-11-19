@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
@@ -26,14 +27,16 @@ class AgentRunEvaluationServiceTest {
         doReturn(1).when(jdbc).update(anyString(), any(Object[].class));
 
         var scores = mapper.readTree("""
-                {"overall": 0.9, "taskCompletion": 1.0, "summary": "Trace evidence is sufficient"}
+                {"overall": 0.9, "taskCompletion": 1.0, "reasoning": "do not persist", "summary": "Trace evidence is sufficient"}
                 """);
         Map<String, Object> saved = service.save(
                 "agent-1", "trace-1", "judge-model", "task completion", scores);
 
         assertEquals("run-1", saved.get("runId"));
         assertEquals("trace-1", saved.get("traceId"));
-        assertEquals(scores, saved.get("scores"));
+        var safeScores = (com.fasterxml.jackson.databind.JsonNode) saved.get("scores");
+        assertEquals(0.9, safeScores.get("overall").asDouble());
+        assertFalse(safeScores.has("reasoning"));
         verify(jdbc).update(org.mockito.ArgumentMatchers.contains("INSERT INTO agent_run_evaluation"),
                 any(Object[].class));
     }
