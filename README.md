@@ -15,7 +15,21 @@ The observability API now materializes a queryable Run index from accepted trace
 - `agent_run` stores the Run-level projection; `agent_run_event` stores append-only span lifecycle observations; `agent_trace_span` remains the detailed span source of truth.
 - Provider token totals are aggregated only from spans marked `PROVIDER`; estimated or missing usage is never represented as provider usage.
 
-See [docs/run-history.md](docs/run-history.md). The additive V7–V9 Flyway migrations create Trace, Run, and persisted Judge evaluation history tables; they are applied by the production profile. No production database was modified as part of this change. See [docs/integrations.md](docs/integrations.md) for the upstream reuse register, current OTLP export hooks, license boundaries, and recommended Promptfoo / DeepEval / MCP Inspector integrations.
+See [docs/run-history.md](docs/run-history.md). The additive V7–V10 Flyway migrations create Trace, Run, persisted Judge evaluation history, and agent-scoped Promptfoo report tables; they are applied by the production profile. No production database was modified as part of this change. See [docs/integrations.md](docs/integrations.md) for the upstream reuse register, OTLP/HTTP JSON and Protobuf ingestion, Promptfoo report import/history, current export hooks, license boundaries, and recommended DeepEval / MCP Inspector integrations.
+
+## OpenTelemetry and Promptfoo report APIs
+
+The authenticated OTLP receiver accepts both standard OTLP/HTTP JSON and Protobuf at `POST /api/v1/otlp/v1/traces`. Use the official OTLP HTTP JSON exporter or Protobuf exporter; both feed the same span normalization, Run projection, persistence and live-event path.
+
+Promptfoo remains an external CLI runner. OwnAgent does not execute arbitrary Promptfoo projects on the server. Instead, an Agent API key can import an exported JSON / JSONL report and retrieve its saved history:
+
+~~~http
+POST /api/v1/evaluations/promptfoo/import
+GET  /api/v1/evaluations/promptfoo
+GET  /api/v1/evaluations/promptfoo/{reportId}
+~~~
+
+Imports are scoped to the authenticated Agent, limited to 20 MB, and have internal reasoning/analysis fields removed before persistence. Reports are stored independently from Run evaluations; linking a report to a specific Run remains future work. Apply Flyway V10 when deploying this branch.
 
 ## What it does
 
