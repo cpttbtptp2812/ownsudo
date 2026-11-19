@@ -960,6 +960,7 @@ public class AgentPlatformController {
                                         try {
                                             Map<String, Object> toolPayloadMap = new LinkedHashMap<>();
                                             toolPayloadMap.put("tool", functionName);
+                                            toolPayloadMap.put("id", callId);
                                             toolPayloadMap.put("toolCallId", callId);
                                             toolPayloadMap.put("modelStep", currentDepth);
                                             toolPayloadMap.put("parameters", functionArgs);
