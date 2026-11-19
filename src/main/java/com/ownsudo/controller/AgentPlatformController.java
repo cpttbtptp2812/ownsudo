@@ -853,6 +853,15 @@ public class AgentPlatformController {
                         com.fasterxml.jackson.databind.JsonNode compResponse =
                                 llmClientService.callChatCompletionsWithTools(rawModel, temperature, messages, toolDefs, isClientConnected);
 
+                        if (compResponse == null || !compResponse.has("choices") || compResponse.get("choices").size() == 0) {
+                            Map<String, Object> emptyResponseDetail = new LinkedHashMap<>(modelRequestDetail);
+                            emptyResponseDetail.put("error", "模型未返回有效 choices");
+                            sendExecutionEvent(emitter, isClientConnected, modelStepId, 40 + currentDepth,
+                                    "llm", "failed", "模型响应为空 · 第 " + currentDepth + " 轮",
+                                    "Provider 没有返回可用的模型消息", emptyResponseDetail);
+                            activeModelStepId.compareAndSet(modelStepId, null);
+                        }
+
                         if (compResponse != null && compResponse.has("choices") && compResponse.get("choices").size() > 0) {
                             com.fasterxml.jackson.databind.JsonNode messageNode = compResponse.get("choices").get(0).path("message");
                             Map<String, Object> modelResponseDetail = new LinkedHashMap<>(modelRequestDetail);
@@ -1043,11 +1052,12 @@ public class AgentPlatformController {
                         } else {
                             failedModelDetail.put("content_capture", "disabled");
                         }
-                        sendExecutionEvent(emitter, isClientConnected,
-                                "model-call-round-" + currentDepth,
-                                40 + currentDepth, "llm", "failed", "模型请求失败 · 第 " + currentDepth + " 轮",
-                                "模型调用发生异常，已记录真实错误", failedModelDetail);
-                        activeModelStepId.set(null);
+                        String failedStepId = activeModelStepId.getAndSet(null);
+                        if (failedStepId != null) {
+                            sendExecutionEvent(emitter, isClientConnected, failedStepId,
+                                    40 + currentDepth, "llm", "failed", "模型请求失败 · 第 " + currentDepth + " 轮",
+                                    "模型调用发生异常，已记录真实错误", failedModelDetail);
+                        }
                         System.err.println("[ToolLoop] 工具调用循环检查异常: " + e.getMessage());
                     }
                     break;
