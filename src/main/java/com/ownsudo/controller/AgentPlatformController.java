@@ -972,9 +972,16 @@ public class AgentPlatformController {
                                             toolDetail.put("toolCallId", callId);
                                             toolDetail.put("modelStep", currentDepth);
                                             toolDetail.put("tool_arguments", boundedTraceValue(parseJsonOrText(functionArgs)));
-                                            toolDetail.put("tool_result", boundedTraceValue(toolResult.isSuccess() ? toolResult.getData() : Map.of(
-                                                    "success", false, "errorType", toolResult.getErrorType(),
-                                                    "message", toolResult.getErrorMessage(), "retryable", toolResult.isRetryable())));
+                                            Map<String, Object> toolResultTrace = new LinkedHashMap<>();
+                                            toolResultTrace.put("success", toolResult.isSuccess());
+                                            if (toolResult.isSuccess()) {
+                                                toolResultTrace.put("data", toolResult.getData());
+                                            } else {
+                                                toolResultTrace.put("errorType", toolResult.getErrorType());
+                                                toolResultTrace.put("message", toolResult.getErrorMessage());
+                                                toolResultTrace.put("retryable", toolResult.isRetryable());
+                                            }
+                                            toolDetail.put("tool_result", boundedTraceValue(toolResultTrace));
                                             toolDetail.put("parameters", functionArgs);
                                             toolDetail.put("result", toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage());
                                             toolDetail.put("durationMs", toolDuration);
