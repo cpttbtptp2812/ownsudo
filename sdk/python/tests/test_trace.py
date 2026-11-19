@@ -81,7 +81,7 @@ def test_agent_run_propagates_run_and_session_identity_to_nested_spans() -> None
         requests.append(json.loads(request.content))
         return httpx.Response(202, json={"accepted": True})
 
-    with OwnAgentClient("http://localhost:8080", "test-key",
+    with OwnAgentClient("http://localhost:8080", "test-key",  # noqa: SIM117
                         transport=httpx.MockTransport(handler)) as client:
         with client.agent_run("customer-support", session_id="session-42") as run:
             with run.span("llm.chat.completions", span_kind="CLIENT") as llm:
