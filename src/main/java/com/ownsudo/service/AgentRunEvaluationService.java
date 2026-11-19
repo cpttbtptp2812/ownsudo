@@ -1,6 +1,8 @@
 package com.ownsudo.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -38,12 +40,13 @@ public class AgentRunEvaluationService {
         String runId = matchingRuns.isEmpty() ? null : String.valueOf(matchingRuns.get(0).get("run_id"));
         String evaluationId = UUID.randomUUID().toString();
         LocalDateTime createdAt = LocalDateTime.now(ZoneOffset.UTC);
+        JsonNode safeScores = sanitizeScores(scores);
         jdbc.update("""
                 INSERT INTO agent_run_evaluation
                     (evaluation_id, agent_id, run_id, trace_id, judge_model, rubric, scores_json, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, evaluationId, agentId, runId, traceId, judgeModel, rubric,
-                mapper.writeValueAsString(scores), createdAt);
+                mapper.writeValueAsString(safeScores), createdAt);
 
         Map<String, Object> result = new HashMap<>();
         result.put("evaluationId", evaluationId);
@@ -51,9 +54,67 @@ public class AgentRunEvaluationService {
         result.put("traceId", traceId);
         result.put("judgeModel", judgeModel);
         result.put("rubric", rubric);
-        result.put("scores", scores);
+        result.put("scores", safeScores);
         result.put("createdAt", createdAt);
         return result;
+    }
+
+    private JsonNode sanitizeScores(JsonNode value) {
+        if (value == null) return mapper.createObjectNode();
+        if (value.isObject()) {
+            ObjectNode safe = mapper.createObjectNode();
+            var fields = value.fields();
+            while (fields.hasNext()) {
+                var field = fields.next();
+                String key = field.getKey().toLowerCase();
+                if (isInternalReasoningKey(key)) continue;
+                JsonNode child = field.getValue();
+                if (child != null && child.isObject()) {
+                    String channel = child.path("channel").asText(
+                            child.path("type").asText(child.path("kind").asText("")));
+                    String role = child.path("role").asText("");
+                    if (isInternalReasoningChannel(channel) && (role.isBlank() || role.equalsIgnoreCase("assistant"))) {
+                        continue;
+                    }
+                }
+                safe.set(field.getKey(), sanitizeScores(child));
+            }
+            return safe;
+        }
+        if (value.isArray()) {
+            ArrayNode safe = mapper.createArrayNode();
+            for (JsonNode item : value) {
+                if (item != null && item.isObject()) {
+                    String channel = item.path("channel").asText(
+                            item.path("type").asText(item.path("kind").asText("")));
+                    String role = item.path("role").asText("");
+                    if (isInternalReasoningChannel(channel) && (role.isBlank() || role.equalsIgnoreCase("assistant"))) {
+                        continue;
+                    }
+                }
+                safe.add(sanitizeScores(item));
+            }
+            return safe;
+        }
+        return value.deepCopy();
+    }
+
+    private boolean isInternalReasoningKey(String key) {
+        return key.startsWith("analysis")
+                || key.startsWith("reasoning")
+                || key.startsWith("chain_of_thought")
+                || key.startsWith("chainofthought")
+                || key.startsWith("internal_thought")
+                || key.startsWith("thought")
+                || key.startsWith("scratchpad");
+    }
+
+    private boolean isInternalReasoningChannel(String channel) {
+        String normalized = channel == null ? "" : channel.toLowerCase();
+        return normalized.contains("analysis")
+                || normalized.contains("reasoning")
+                || normalized.contains("thought")
+                || normalized.contains("internal");
     }
 
     public List<Map<String, Object>> history(String agentId, String traceId) {
