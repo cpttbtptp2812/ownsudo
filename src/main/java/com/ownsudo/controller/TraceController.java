@@ -7,6 +7,7 @@ import com.ownsudo.security.AgentApiKeyFilter;
 import com.ownsudo.service.TraceEventStreamService;
 import com.ownsudo.service.TraceSpanService;
 import com.ownsudo.service.LlmClientService;
+import com.ownsudo.service.AgentRunPersistenceService;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -22,12 +23,14 @@ public class TraceController {
     private final TraceEventStreamService eventStream;
     private final ObjectMapper mapper;
     private final LlmClientService llmClientService;
+    private final AgentRunPersistenceService runHistory;
 
-    public TraceController(TraceSpanService service, TraceEventStreamService eventStream, ObjectMapper mapper, LlmClientService llmClientService) {
+    public TraceController(TraceSpanService service, TraceEventStreamService eventStream, ObjectMapper mapper, LlmClientService llmClientService, AgentRunPersistenceService runHistory) {
         this.service = service;
         this.eventStream = eventStream;
         this.mapper = mapper;
         this.llmClientService = llmClientService;
+        this.runHistory = runHistory;
     }
 
     @PostMapping("/spans")
@@ -35,7 +38,9 @@ public class TraceController {
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
             @RequestBody(required = false) IngestTraceSpanRequest request) {
         try {
-            TraceSpanResponse span = TraceSpanResponse.from(service.ingest(agentId, request), mapper);
+            var persisted = service.ingest(agentId, request);
+            runHistory.recordSpan(agentId, persisted);
+            TraceSpanResponse span = TraceSpanResponse.from(persisted, mapper);
             // Publish only after TraceSpanService's transactional call has returned successfully.
             eventStream.publish(agentId, span);
             return ResponseEntity.status(202).body(span);
