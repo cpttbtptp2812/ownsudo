@@ -103,7 +103,7 @@ def run_agent(
     # and every captured value is bounded before it is persisted in Span attributes.
     capture_content = os.environ.get("OWNAGENT_TRACE_CAPTURE_CONTENT", "").lower() in {"1", "true", "yes"}
 
-    def capture(value: Any, limit: int = 9000) -> Any:
+    def capture(value: Any, limit: int = 6000) -> Any:
         if not capture_content:
             return None
         serialized = json.dumps(value, ensure_ascii=False, default=str)
