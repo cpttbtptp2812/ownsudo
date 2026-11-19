@@ -121,7 +121,7 @@ public class PromptfooReportController {
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
             @PathVariable String reportId) {
         List<Map<String, Object>> reports = jdbc.queryForList("""
-                SELECT report_id AS reportId, file_name AS fileName, report_format AS format,
+                SELECT report_id AS reportId, run_id AS runId, file_name AS fileName, report_format AS format,
                        result_count AS resultCount, success_count AS successCount,
                        failure_count AS failureCount, error_count AS errorCount,
                        report_json AS reportJson, created_at AS createdAt
