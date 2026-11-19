@@ -920,6 +920,29 @@ public class AgentPlatformController {
                                         } catch (IOException ignored) {}
                                     }
 
+                                    Map<String, Object> toolStartDetail = new LinkedHashMap<>();
+                                    toolStartDetail.put("functionName", functionName);
+                                    toolStartDetail.put("toolCallId", callId);
+                                    toolStartDetail.put("modelStep", currentDepth);
+                                    toolStartDetail.put("tool_arguments", boundedTraceValue(parseJsonOrText(functionArgs)));
+                                    Map<String, Object> toolStartPayload = new LinkedHashMap<>();
+                                    toolStartPayload.put("stepId", callId);
+                                    toolStartPayload.put("seq", 5);
+                                    toolStartPayload.put("phase", "skill");
+                                    toolStartPayload.put("status", "running");
+                                    toolStartPayload.put("leftTitle", "正在执行工具: " + functionName);
+                                    toolStartPayload.put("leftSummary", "模型已发起工具调用，执行端正在处理");
+                                    toolStartPayload.put("title", "正在执行工具: " + functionName);
+                                    toolStartPayload.put("rightTitle", functionName);
+                                    toolStartPayload.put("rightSubtitle", "工具调用已接收，正在执行");
+                                    toolStartPayload.put("rightDetail", toolStartDetail);
+                                    toolStartPayload.put("timestamp", System.currentTimeMillis());
+                                    if (isClientConnected.get()) {
+                                        try {
+                                            emitter.send(SseEmitter.event().name("agent_step").data(objectMapper.writeValueAsString(toolStartPayload)));
+                                        } catch (IOException ignored) {}
+                                    }
+
                                     long toolStart = System.currentTimeMillis();
                                     ToolExecutor.ToolExecutionResult toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
                                     long toolDuration = System.currentTimeMillis() - toolStart;
