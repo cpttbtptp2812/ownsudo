@@ -44,6 +44,7 @@ public class AgentRunPersistenceService {
                        SUM(CASE WHEN usage_source = 'PROVIDER' THEN total_tokens ELSE NULL END) AS total_tokens,
                        SUM(CASE WHEN usage_source = 'PROVIDER' THEN 1 ELSE 0 END) AS provider_usage_count,
                        SUM(CASE WHEN usage_source = 'ESTIMATED' THEN 1 ELSE 0 END) AS estimated_usage_count,
+                       MIN(CASE WHEN parent_span_id IS NULL THEN name ELSE NULL END) AS root_name,
                        MIN(started_at) AS started_at,
                        MAX(ended_at) AS ended_at
                   FROM agent_trace_span
@@ -61,7 +62,9 @@ public class AgentRunPersistenceService {
 
         String sessionId = jsonAttribute(span.getAttributesJson(), "session.id");
         String conversationId = jsonAttribute(span.getAttributesJson(), "conversation.id");
-        String name = span.getName() == null || span.getName().isBlank() ? "Agent run" : span.getName();
+        Object rootName = aggregate.get("root_name");
+        String name = rootName instanceof String value && !value.isBlank()
+                ? value : span.getName() == null || span.getName().isBlank() ? "Agent run" : span.getName();
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
 
         Map<String, Object> values = new java.util.HashMap<>();
