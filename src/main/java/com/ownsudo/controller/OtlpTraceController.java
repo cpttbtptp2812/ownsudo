@@ -9,6 +9,7 @@ import com.ownsudo.security.AgentApiKeyFilter;
 import com.ownsudo.service.TraceEventStreamService;
 import com.ownsudo.service.TraceSpanService;
 import com.ownsudo.service.TraceExportService;
+import com.ownsudo.service.AgentRunPersistenceService;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -30,13 +31,15 @@ public class OtlpTraceController {
     private final TraceEventStreamService stream;
     private final TraceExportService exporter;
     private final ObjectMapper mapper;
+    private final AgentRunPersistenceService runHistory;
 
     public OtlpTraceController(TraceSpanService spans, TraceEventStreamService stream,
-                               TraceExportService exporter, ObjectMapper mapper) {
+                               TraceExportService exporter, ObjectMapper mapper, AgentRunPersistenceService runHistory) {
         this.spans = spans;
         this.stream = stream;
         this.exporter = exporter;
         this.mapper = mapper;
+        this.runHistory = runHistory;
     }
 
     @PostMapping(path = "/v1/traces", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -61,8 +64,9 @@ public class OtlpTraceController {
                 if (!spanList.isArray()) continue;
                 for (JsonNode raw : spanList) {
                     try {
-                        TraceSpanResponse saved = TraceSpanResponse.from(
-                                spans.ingest(agentId, toRequest(raw, resourceAttributes)), mapper);
+                        var persisted = spans.ingest(agentId, toRequest(raw, resourceAttributes));
+                        runHistory.recordSpan(agentId, persisted);
+                        TraceSpanResponse saved = TraceSpanResponse.from(persisted, mapper);
                         stream.publish(agentId, saved);
                         accepted++;
                     } catch (Exception error) {
