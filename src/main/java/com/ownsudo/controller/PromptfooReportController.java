@@ -130,13 +130,36 @@ public class PromptfooReportController {
             node.forEach(value -> result.add(sanitize(value)));
             return result;
         }
+        // OpenInference / provider payloads may encode hidden channels as message
+        // metadata rather than as a field named "reasoning". Drop those assistant
+        // messages before persisting or returning an imported report.
+        String channel = firstText(node, "channel", "type", "kind", "message_type").toLowerCase(Locale.ROOT);
+        String role = firstText(node, "role").toLowerCase(Locale.ROOT);
+        if (channel.matches(".*(analysis|reasoning|thought|internal).*")
+                && (role.isBlank() || role.equals("assistant"))) {
+            return mapper.getNodeFactory().nullNode();
+        }
+
         ObjectNode result = mapper.createObjectNode();
         node.fields().forEachRemaining(entry -> {
             String key = entry.getKey().toLowerCase(Locale.ROOT);
-            if (key.matches("analysis|reasoning|chain_of_thought|chainofthought|internal_thought|thoughts?|scratchpad")) return;
-            result.set(entry.getKey(), sanitize(entry.getValue()));
+            if (key.matches("^(analysis|reasoning|chain_of_thought|chainofthought|internal_thought|thoughts?|scratchpad)(_|$).*")) return;
+            JsonNode sanitized = sanitize(entry.getValue());
+            if (!sanitized.isNull() || entry.getValue().isNull()) {
+                result.set(entry.getKey(), sanitized);
+            }
         });
         return result;
+    }
+
+    private static String firstText(JsonNode node, String... fields) {
+        for (String field : fields) {
+            JsonNode value = node.get(field);
+            if (value != null && value.isValueNode() && !value.isNull() && !value.asText().isBlank()) {
+                return value.asText();
+            }
+        }
+        return "";
     }
 
     private static String safeFileName(String name) {
