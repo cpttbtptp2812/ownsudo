@@ -10,7 +10,7 @@ This document is the integration decision register. "Supported" means there is a
 | [AgentPrism](https://github.com/evilmartians/agent-prism) | MIT-licensed OpenTelemetry data adapter, span tree construction, token helpers and required types | Vendored data layer only; its full UI is not bundled |
 | [Langfuse](https://github.com/langfuse/langfuse) | Existing OTLP export hook can forward accepted trace payloads to a configured compatible receiver | Configurable export path; not an embedded Langfuse deployment or a tested turnkey connector |
 | [Arize Phoenix](https://github.com/Arize-ai/phoenix) | Existing OTLP export hook can forward accepted trace payloads to a configured compatible receiver | Configurable export path; not an embedded Phoenix deployment or a tested turnkey connector |
-| [OpenInference](https://github.com/Arize-ai/openinference) | Optional Python extras and runnable examples for OpenAI and LangChain auto-instrumentation; OpenAI Agents extra is also available | Integrated as optional upstream adapters; exported spans use OwnAgent OTLP/JSON and resource-level run/session identity |
+| [OpenInference](https://github.com/Arize-ai/openinference) | Optional Python extras and runnable examples for OpenAI, OpenAI Agents, LangChain, and MCP context propagation | Integrated as optional upstream adapters; exported spans use OwnAgent OTLP/JSON and resource-level run/session identity |
 
 Backend export configuration:
 - `OWNAGENT_OTLP_EXPORT_ENDPOINT`
@@ -42,9 +42,9 @@ OwnAgent remains the local system of record. Export failures are logged and do n
 ## Product gaps to close
 
 - Persistent Evaluation datasets, experiments, evaluator results and comparison history.
-- A supported Promptfoo / DeepEval adapter that writes results against OwnAgent Run IDs.
+- A persistent Promptfoo / DeepEval adapter that writes imported evaluation results against OwnAgent Run IDs. The frontend currently previews Promptfoo JSON reports locally; no server-side execution or persistence yet.
 - Expand OpenInference examples and test framework/version compatibility; current OpenAI and LangChain examples are starter integrations.
-- A first-class MCP server/tool inspector backed by the existing MCP tool registry.
+- A first-class embedded MCP Inspector backed by the existing MCP tool registry. The official standalone MCP Inspector can already be launched locally from the Integration Hub.
 - Replay based on persisted events, with explicit safeguards against repeating external side effects.
 - Account login, tenant ownership, and user-managed Agent API keys. Current Agent API keys are not a user account system.
 
