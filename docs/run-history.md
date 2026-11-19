@@ -29,4 +29,4 @@ All endpoints require the Agent API key as a Bearer token.
 
 ## Migration
 
-Production profile enables Flyway and applies `V7__create_agent_trace_spans.sql`, `V8__create_agent_run_history.sql`, and `V9__create_agent_run_evaluations.sql` after the existing migrations. Do not apply them manually and do not enable production deployment without a backup and a reviewed migration plan.
+Production profile enables Flyway and applies the additive V7–V10 migrations after the existing migrations: V7 creates Trace spans, V8 creates Run history, V9 creates persisted Judge evaluations, and V10 creates Agent-scoped Promptfoo report storage. V10 does not attach Promptfoo reports to individual Runs yet. Do not apply them manually and do not enable production deployment without a backup and a reviewed migration plan.
