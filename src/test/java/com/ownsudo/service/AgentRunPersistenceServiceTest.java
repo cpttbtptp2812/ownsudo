@@ -11,6 +11,11 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.mockito.ArgumentCaptor;
+
+import java.util.Arrays;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -52,10 +57,13 @@ class AgentRunPersistenceServiceTest {
         span.setOutputTokens(30L);
         span.setTotalTokens(150L);
         span.setUsageSource("PROVIDER");
-        span.setAttributesJson("{\"session.id\":\"session-1\"}");
+        span.setAttributesJson("{\"session.id\":\"session-1\",\"gen_ai.conversation.id\":\"conversation-1\"}");
 
         assertDoesNotThrow(() -> service.recordSpan("agent-1", span));
         verify(jdbc).queryForMap(contains("usage_source = 'PROVIDER'"), eq("agent-1"), eq("trace-1"));
-        verify(jdbc, times(2)).update(anyString(), any(Object[].class));
+        ArgumentCaptor<Object[]> updateArguments = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc, times(2)).update(anyString(), updateArguments.capture());
+        assertTrue(Arrays.stream(updateArguments.getAllValues().get(0))
+                .anyMatch("conversation-1"::equals));
     }
 }
