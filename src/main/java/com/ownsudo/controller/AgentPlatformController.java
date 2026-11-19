@@ -972,7 +972,7 @@ public class AgentPlatformController {
                                             // 同步下发高阶 agent_step 事件，驱动双视窗实时同步
                                             Map<String, Object> toolStepPayload = new LinkedHashMap<>();
                                             toolStepPayload.put("seq", 5);
-                                            toolStepPayload.put("stepId", "tool-" + functionName + "-" + callId);
+                                            toolStepPayload.put("stepId", callId); // Match the `tool` SSE event identity so the UI merges, rather than duplicates, this call.
                                             toolStepPayload.put("phase", "skill");
                                             toolStepPayload.put("status", toolResult.isSuccess() ? "done" : "failed");
                                             toolStepPayload.put("leftTitle", "技能调度: " + functionName);
