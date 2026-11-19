@@ -3,6 +3,9 @@ package com.ownsudo.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
+import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
 import com.ownsudo.dto.IngestTraceSpanRequest;
 import com.ownsudo.dto.TraceSpanResponse;
 import com.ownsudo.security.AgentApiKeyFilter;
@@ -46,6 +49,36 @@ public class OtlpTraceController {
     public ResponseEntity<?> ingest(
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
             @RequestBody(required = false) JsonNode request) {
+        return ingestPayload(agentId, request);
+    }
+
+    /**
+     * OTLP/HTTP protobuf is the default transport for many OpenTelemetry SDKs.
+     * Convert the generated wire message through the official protobuf JSON mapping,
+     * then reuse the exact same validation, normalization and persistence path as JSON.
+     */
+    @PostMapping(path = "/v1/traces", consumes = "application/x-protobuf")
+    public ResponseEntity<?> ingestProtobuf(
+            @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
+            @RequestBody(required = false) byte[] payload) {
+        if (payload == null || payload.length == 0) {
+            return ResponseEntity.badRequest().body(Map.of("error", Map.of(
+                    "code", "INVALID_OTLP_REQUEST", "message", "Protobuf request body is empty")));
+        }
+        try {
+            ExportTraceServiceRequest message = ExportTraceServiceRequest.parseFrom(payload);
+            JsonNode request = mapper.readTree(JsonFormat.printer().print(message));
+            return ingestPayload(agentId, request);
+        } catch (InvalidProtocolBufferException error) {
+            return ResponseEntity.badRequest().body(Map.of("error", Map.of(
+                    "code", "INVALID_OTLP_PROTOBUF", "message", "Could not decode OTLP ExportTraceServiceRequest")));
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(Map.of("error", Map.of(
+                    "code", "INVALID_OTLP_REQUEST", "message", error.getMessage() == null ? "Could not decode OTLP request" : error.getMessage())));
+        }
+    }
+
+    private ResponseEntity<?> ingestPayload(String agentId, JsonNode request) {
         if (request == null || !request.isObject() || !request.path("resourceSpans").isArray()) {
             return ResponseEntity.badRequest().body(Map.of("error", Map.of(
                     "code", "INVALID_OTLP_REQUEST", "message", "Expected OTLP ExportTraceServiceRequest.resourceSpans[]")));
