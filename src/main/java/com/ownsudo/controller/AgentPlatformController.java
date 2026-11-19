@@ -9,6 +9,7 @@ import com.ownsudo.service.ToolExecutor;
 import com.ownsudo.service.AgentMemoryService;
 import com.ownsudo.service.ExactHashCacheService;
 import com.ownsudo.service.ModelGatewayService;
+import com.ownsudo.service.ChatRunRecorder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -79,6 +80,9 @@ public class AgentPlatformController {
 
     @Autowired
     private ModelGatewayService modelGatewayService;
+
+    @Autowired
+    private ChatRunRecorder chatRunRecorder;
 
     @Autowired(required = false)
     private com.ownsudo.repository.WorkflowDefinitionRepository workflowDefinitionRepository;
@@ -474,6 +478,14 @@ public class AgentPlatformController {
                 userMsg.setTokens(0);
                 messageRepository.save(userMsg);
 
+                Map<String, Object> runIdentity = chatRunRecorder.start(
+                        sessionId, agentId, activeAgentName,
+                        rawModel != null ? rawModel : llmClientService.getConfig("LLM_MODEL", "configured-model"),
+                        llmClientService.getConfig("LLM_PROVIDER", "configured-provider"), messageText);
+                try {
+                    emitter.send(SseEmitter.event().name("run").data(objectMapper.writeValueAsString(runIdentity)));
+                } catch (Exception ignored) {}
+
                 final StringBuilder reasoningBuffer = new StringBuilder();
 
                 Boolean enableRag = (Boolean) req.getOrDefault("enableRAG", true);
@@ -613,6 +625,7 @@ public class AgentPlatformController {
                     try {
                         asstMsg.setTraceStepsJson(objectMapper.writeValueAsString(traceStepsMap));
                         Map<String, Object> traceSummary = new LinkedHashMap<>();
+                        traceSummary.putAll(chatRunRecorder.currentIdentity());
                         traceSummary.put("cached", true);
                         traceSummary.put("totalMs", hitDurationMs);
                         traceSummary.put("tokens", 0);
@@ -635,6 +648,7 @@ public class AgentPlatformController {
                     auditLogRepository.save(audit);
 
                     // F. 完成事件下发，携带真实 Trace 数据
+                    chatRunRecorder.complete(0, 0, false, "COMPLETED");
                     Map<String, Object> traceMap = new LinkedHashMap<>();
                     traceMap.put("totalMs", hitDurationMs);
                     traceMap.put("ragMs", 0);
@@ -943,9 +957,11 @@ public class AgentPlatformController {
                                         } catch (IOException ignored) {}
                                     }
 
+                                    chatRunRecorder.recordToolStart(callId, functionName, parseJsonOrText(functionArgs) instanceof Map<?, ?> argsMap ? (Map<String, Object>) argsMap : Map.of("raw", functionArgs));
                                     long toolStart = System.currentTimeMillis();
                                     ToolExecutor.ToolExecutionResult toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
                                     long toolDuration = System.currentTimeMillis() - toolStart;
+                                    chatRunRecorder.recordToolResult(callId, functionName, toolResult.isSuccess(), toolDuration, boundedTraceValue(toolResult.isSuccess() ? toolResult.getData() : null), toolResult.isSuccess() ? null : toolResult.getErrorMessage());
                                     String toolDurationStr = toolDuration + "ms";
 
                                     if (isClientConnected.get()) {
@@ -1194,6 +1210,7 @@ public class AgentPlatformController {
                 sendExecutionEvent(emitter, isClientConnected, traceStepsMap, finalModelStepId, 60,
                         "llm", "done", "最终回答生成", "模型流式回答已完成", finalResponseDetail);
                 activeModelStepId.compareAndSet(finalModelStepId, null);
+                chatRunRecorder.complete(promptTokensRef.get(), completionTokensRef.get(), hasRealUsageRef.get(), isClientConnected.get() ? "COMPLETED" : "ABORTED");
 
                 // 7. 解决引用保存 Bug：setCitationsJson 必须在 save 之前赋值，确保持久化
                 ChatMessageEntity asstMsg = new ChatMessageEntity();
@@ -1218,6 +1235,7 @@ public class AgentPlatformController {
                         asstMsg.setApprovalTicketJson(objectMapper.writeValueAsString(approvalTicketRef.get()));
                     }
                     Map<String, Object> traceSummary = new LinkedHashMap<>();
+                    traceSummary.putAll(chatRunRecorder.currentIdentity());
                     traceSummary.put("cached", false);
                     traceSummary.put("totalMs", durationMs);
                     traceSummary.put("tokens", asstMsg.getTokens());
@@ -1320,6 +1338,7 @@ public class AgentPlatformController {
                 }
 
             } catch (Exception e) {
+                chatRunRecorder.fail(e);
                 String activeStepId = activeModelStepId.getAndSet(null);
                 if (activeStepId != null) {
                     Map<String, Object> failedDetail = new LinkedHashMap<>();
@@ -1336,6 +1355,8 @@ public class AgentPlatformController {
                     } catch (IOException ignored) {}
                     emitter.complete();
                 }
+            } finally {
+                chatRunRecorder.clear();
             }
         });
 
@@ -1592,6 +1613,7 @@ public class AgentPlatformController {
         payload.put("rightDetail", details);
         payload.put("timestamp", System.currentTimeMillis());
         if (traceStepsMap != null) traceStepsMap.put(seq, payload);
+        chatRunRecorder.recordStep(stepId, seq, phase, status, title, subtitle, details);
         try {
             String json = objectMapper.writeValueAsString(payload);
             emitter.send(SseEmitter.event().name("agent_step").data(json));
@@ -1651,6 +1673,7 @@ public class AgentPlatformController {
         if (details != null) payload.putAll(details);
 
         if (traceStepsMap != null) traceStepsMap.put(step, payload);
+        chatRunRecorder.recordStep("step-" + step + "-" + eventName.toLowerCase(Locale.ROOT).replace('_', '-'), step, phase, status, label, "", details);
         if (isConnected != null && !isConnected.get()) return;
         try {
             String json = objectMapper.writeValueAsString(payload);
