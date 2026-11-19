@@ -124,7 +124,7 @@ public class PromptfooReportController {
     }
 
     private JsonNode sanitize(JsonNode node) {
-        if (node == null || node.isValueNode()) return node == null ? mapper.nullNode() : node.deepCopy();
+        if (node == null || node.isValueNode()) return node == null ? mapper.getNodeFactory().nullNode() : node.deepCopy();
         if (node.isArray()) {
             ArrayNode result = mapper.createArrayNode();
             node.forEach(value -> result.add(sanitize(value)));
