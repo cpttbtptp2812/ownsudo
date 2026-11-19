@@ -91,6 +91,20 @@ public class ChatRunRecorder {
             attributes.put("title", title == null ? "" : title);
             attributes.put("subtitle", subtitle == null ? "" : subtitle);
             attributes.put("details", details == null ? Map.of() : details);
+            if (details != null) {
+                Object model = details.get("actual_model") != null ? details.get("actual_model") : details.get("model");
+                if (model != null) attributes.put("model", model);
+                Object provider = details.get("provider");
+                if (provider != null) attributes.put("provider", provider);
+                Object tool = details.get("tool");
+                if (tool != null) attributes.put("gen_ai.tool.name", tool);
+                for (String key : List.of("prompt_messages", "model_response", "tool_schema", "tool_arguments", "tool_result", "usage", "error_message", "content_capture")) {
+                    if (details.containsKey(key)) attributes.put(key, details.get(key));
+                }
+                if (details.containsKey("arguments")) attributes.put("tool_arguments", details.get("arguments"));
+                if (details.containsKey("result")) attributes.put("tool_result", details.get("result"));
+                if (details.containsKey("error")) attributes.put("error_message", details.get("error"));
+            }
             upsertSpan(ctx, spanId, parentSpanId, stepId, phase, spanStatus, started, ended, attributes);
         }
     }
