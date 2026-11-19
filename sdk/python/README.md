@@ -1,8 +1,21 @@
 # OwnAgent Python SDK
 
-Early developer preview of the OwnAgent Action Runtime client and Local Python Worker.
+Python SDK for sending real Agent execution traces to OwnAgent and, optionally, using its Action Runtime and Local Worker. The tracing client is a side channel: your Agent continues to call its existing model provider directly.
 
 The SDK can create and inspect Actions, register tool metadata with a separate developer key, and run explicitly registered Python functions on a developer-controlled machine. The Worker does not download or execute code supplied by the server.
+
+## Provision an Agent API key
+
+The current preview provisions an Agent key through the backend bootstrap configuration; key creation is not yet exposed as a self-service Studio screen. Choose an existing Agent ID from the Studio Agent list, generate a key, and configure these Spring Boot environment variables before starting the backend:
+
+```bash
+export APP_SECURITY_BOOTSTRAP_AGENT_ID="your-existing-agent-id"
+export APP_SECURITY_BOOTSTRAP_AGENT_API_KEY="oa_live_$(openssl rand -hex 32)"
+```
+
+Keep the generated raw key in your secret manager or local environment. The backend stores only its SHA-256 hash. The bootstrap key is associated with the configured Agent and is rotated when you change the configured raw value and restart the backend. Do not commit it to source control.
+
+Once provisioned, use the raw key as `OWNAGENT_AGENT_API_KEY` in the external Agent process. The same Agent key scopes trace ingestion and reads to that Agent.
 
 ## Install
 
@@ -43,6 +56,20 @@ with OwnAgentClient(BASE_URL, AGENT_API_KEY) as ownagent:
 ```
 
 The SDK generates a trace ID and run ID, records a root execution span, and propagates the run ID and parent span context to nested spans. Pass a stable `session_id` to group multiple runs from the same conversation. Model requests still go directly to your configured provider. Prompt and response bodies are not captured unless you explicitly add them to attributes; content capture should remain opt-in and redacted.
+
+## Quick start: observe an external Agent
+
+The repository includes `examples/observability_agent.py`, a small OpenAI-compatible Agent that records one root Run, each real model request/response metadata, tool calls, and tool results. It does not route model traffic through OwnAgent.
+
+```bash
+export OWNAGENT_BASE_URL=http://localhost:8080
+export OWNAGENT_AGENT_API_KEY=oa_live_...
+export OPENAI_API_KEY=...
+export OPENAI_MODEL=...
+python examples/observability_agent.py
+```
+
+To group multiple runs under a stable conversation, also set `OWNAGENT_SESSION_ID`. To deliberately persist exact prompt messages, model responses, tool arguments, and tool results, explicitly opt in with `OWNAGENT_TRACE_CAPTURE_CONTENT=1`. Keep this disabled for normal use and redact sensitive data before sharing traces.
 
 ## Quick start: run a local Python tool
 
@@ -175,7 +202,7 @@ A manual retry creates a new Action with a fresh idempotency key and re-evaluate
 
 This package currently lives in the backend monorepo under `sdk/python` so it can evolve against the API contract. It is independently installable from source but is not yet published to PyPI.
 
-See `examples/basic_agent.py`, `examples/local_worker.py`, and `examples/demo_agent.py`.
+See `examples/observability_agent.py`, `examples/basic_agent.py`, `examples/local_worker.py`, and `examples/demo_agent.py`.
 
 
 ## Trace ingestion API
