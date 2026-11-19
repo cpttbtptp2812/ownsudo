@@ -92,7 +92,7 @@ public class PromptfooReportController {
                         (report_id, agent_id, run_id, file_name, report_format, result_count,
                          success_count, failure_count, error_count, report_json, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, reportId, agentId, fileName, format, rows.size(),
+                    """, reportId, agentId, runId, fileName, format, rows.size(),
                     successes, failures, errors, reportJson, now);
             return ResponseEntity.status(201).body(Map.of(
                     "reportId", reportId, "runId", runId == null ? "" : runId, "fileName", fileName, "format", format,
