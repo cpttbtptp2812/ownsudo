@@ -76,6 +76,10 @@ public class ChatRunRecorder {
         if (stepId != null && !stepId.isBlank()) {
             String spanId = safeSpanId(stepId);
             captureProviderUsage(ctx, spanId, details);
+            if ("llm".equalsIgnoreCase(phase) && "RUNNING".equalsIgnoreCase(status)) {
+                ctx.lastModelSpanId = spanId;
+            }
+            String parentSpanId = "skill".equalsIgnoreCase(phase) ? ctx.lastModelSpanId : null;
             LocalDateTime now = LocalDateTime.now();
             LocalDateTime started = ctx.spanStarts.computeIfAbsent(spanId, ignored -> now);
             String spanStatus = "FAILED".equalsIgnoreCase(status) || "ERROR".equalsIgnoreCase(status)
@@ -87,7 +91,7 @@ public class ChatRunRecorder {
             attributes.put("title", title == null ? "" : title);
             attributes.put("subtitle", subtitle == null ? "" : subtitle);
             attributes.put("details", details == null ? Map.of() : details);
-            upsertSpan(ctx, spanId, stepId, phase, spanStatus, started, ended, attributes);
+            upsertSpan(ctx, spanId, parentSpanId, stepId, phase, spanStatus, started, ended, attributes);
         }
     }
 
@@ -182,7 +186,7 @@ public class ChatRunRecorder {
         }
     }
 
-    private void upsertSpan(RunContext ctx, String spanId, String name, String kind, String status,
+    private void upsertSpan(RunContext ctx, String spanId, String parentSpanId, String name, String kind, String status,
                             LocalDateTime started, LocalDateTime ended, Map<String, Object> attributes) {
         try {
             String json = mapper.writeValueAsString(sanitize(mapper.valueToTree(attributes)));
@@ -197,16 +201,16 @@ public class ChatRunRecorder {
                         INSERT INTO chat_agent_run_span
                             (run_id, span_id, parent_span_id, name, span_kind, status,
                              started_at, ended_at, duration_ms, input_tokens, output_tokens, usage_source, attributes_json)
-                        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, ctx.runId, spanId, blankToDefault(name, "Agent step"),
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, ctx.runId, spanId, parentSpanId, blankToDefault(name, "Agent step"),
                         normalizeKind(kind), status, started, ended, duration, inputTokens, outputTokens, usageSource, json);
             } else {
                 jdbc.update("""
-                        UPDATE chat_agent_run_span SET name = ?, span_kind = ?, status = ?,
+                        UPDATE chat_agent_run_span SET parent_span_id = ?, name = ?, span_kind = ?, status = ?,
                             started_at = ?, ended_at = ?, duration_ms = ?, input_tokens = ?,
                             output_tokens = ?, usage_source = ?, attributes_json = ?
                          WHERE run_id = ? AND span_id = ?
-                        """, blankToDefault(name, "Agent step"), normalizeKind(kind), status,
+                        """, parentSpanId, blankToDefault(name, "Agent step"), normalizeKind(kind), status,
                         started, ended, duration, inputTokens, outputTokens, usageSource, json, ctx.runId, spanId);
             }
         } catch (Exception e) {
@@ -317,6 +321,7 @@ public class ChatRunRecorder {
         volatile long inputTokens = 0;
         volatile long outputTokens = 0;
         volatile boolean providerUsageSeen = false;
+        volatile String lastModelSpanId;
         RunContext(String runId, String traceId, String sessionId, String agentId, LocalDateTime startedAt) {
             this.runId = runId; this.traceId = traceId; this.sessionId = sessionId;
             this.agentId = agentId; this.startedAt = startedAt;
