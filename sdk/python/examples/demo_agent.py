@@ -99,6 +99,18 @@ def run_agent(
     task: str,
     run_id: str,
 ) -> str:
+    # Prompt/response bodies can contain private user data. Capture is opt-in,
+    # and every captured value is bounded before it is persisted in Span attributes.
+    capture_content = os.environ.get("OWNAGENT_TRACE_CAPTURE_CONTENT", "").lower() in {"1", "true", "yes"}
+
+    def capture(value: Any, limit: int = 9000) -> Any:
+        if not capture_content:
+            return None
+        serialized = json.dumps(value, ensure_ascii=False, default=str)
+        if len(serialized) > limit:
+            return serialized[:limit] + "… [truncated]"
+        return value
+
     messages: list[dict[str, Any]] = [
         {
             "role": "system",
@@ -191,7 +203,11 @@ def run_agent(
             "attributes": {
                 "provider": "openai-compatible",
                 "model": payload.get("model"),
+                "model_step": step,
                 "tool_call_count": len(tool_calls),
+                "prompt_messages": capture(messages),
+                "tool_schema": capture(tools),
+                "model_response": capture(message),
             },
         })
         messages.append(message)
@@ -248,7 +264,9 @@ def run_agent(
                     "ended_at": datetime.now(timezone.utc).isoformat(),
                     "usage_source": "MISSING",
                     "attributes": {"action_id": getattr(action, "action_id", None),
-                                   "tool_name": tool_name, "error_type": type(exc).__name__,
+                                   "tool_name": tool_name, "tool_call_id": call_id,
+                                   "model_step": step, "tool_arguments": capture(arguments),
+                                   "error_type": type(exc).__name__,
                                    "error_message": str(exc)[:500]},
                 })
                 _record_span(ownagent, {
@@ -272,7 +290,14 @@ def run_agent(
                 "started_at": action_started_at.isoformat(),
                 "ended_at": action_ended_at.isoformat(),
                 "usage_source": "MISSING",
-                "attributes": {"action_id": result.action_id, "tool_name": tool_name},
+                "attributes": {
+                    "action_id": result.action_id,
+                    "tool_name": tool_name,
+                    "tool_call_id": call_id,
+                    "model_step": step,
+                    "tool_arguments": capture(arguments),
+                    "tool_result": capture(result.output or {}),
+                },
             })
             messages.append(
                 {
