@@ -22,9 +22,9 @@ OwnAgent remains the local system of record. Export failures are logged and do n
 
 | Project | License / fit | Decision |
 | --- | --- | --- |
-| [Promptfoo](https://github.com/promptfoo/promptfoo) | Apache-2.0; mature prompt/agent eval CLI, red-team and regression workflows | Integrate as an optional evaluation runner and CI adapter. Do not recreate its CLI or copy its dashboard. |
+| [Promptfoo](https://github.com/promptfoo/promptfoo) | Apache-2.0; mature prompt/agent eval CLI, red-team and regression workflows | Integration Hub provides CLI examples and local JSON/JSONL report preview; server-side execution and persistence remain future work. |
 | [DeepEval](https://github.com/confident-ai/deepeval) | Apache-2.0; pytest-style LLM evaluation and metric library | Optional Python evaluation extra; map results into OwnAgent Evaluation records. |
-| [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | MIT; official MCP server/client debugging UI | Link/launch as a developer tool or embed via a supported integration boundary; do not fork its UI into OwnAgent. |
+| [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | MIT; official MCP server/client debugging UI | Integration Hub launches the official local Web / CLI / TUI tool; do not fork or embed its UI. |
 | [OpenInference](https://github.com/Arize-ai/openinference) | Apache-2.0 instrumentation conventions and framework instrumentation | Integrated as optional SDK extras for OpenAI, LangChain and OpenAI Agents; expand examples and compatibility tests. |
 | [AgentOps](https://github.com/AgentOps-AI/agentops) | MIT; agent session analytics and replay | Study event model and compatibility; avoid running a second competing trace store. |
 | [Langfuse](https://github.com/langfuse/langfuse) | MIT core with separately licensed enterprise components | Prefer OTLP interoperability / optional sidecar deployment over copying the platform. |
