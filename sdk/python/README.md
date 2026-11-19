@@ -21,6 +21,29 @@ pytest
 ruff check src tests examples
 ```
 
+## Quick start: observe your own Agent
+
+Use the SDK as a side-channel observer. It does not proxy or replace your model client. Wrap one Agent execution in `agent_run()`, then wrap each real model call and tool execution in child spans:
+
+```python
+from ownagent import OwnAgentClient
+
+with OwnAgentClient(BASE_URL, AGENT_API_KEY) as ownagent:
+    with ownagent.agent_run("customer-support", session_id="conversation-123") as run:
+        with run.span("llm.chat.completions", span_kind="CLIENT") as model_span:
+            response = call_your_existing_model_client()
+            usage = response.usage  # use the actual provider response
+            model_span.set_usage(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+            )
+
+        with run.span("tool.lookup_order") as tool_span:
+            result = lookup_order(order_id="1024")
+```
+
+The SDK generates a trace ID and run ID, records a root execution span, and propagates the run ID and parent span context to nested spans. Pass a stable `session_id` to group multiple runs from the same conversation. Model requests still go directly to your configured provider. Prompt and response bodies are not captured unless you explicitly add them to attributes; content capture should remain opt-in and redacted.
+
 ## Quick start: run a local Python tool
 
 Start OwnAgent backend and configure these environment variables:
