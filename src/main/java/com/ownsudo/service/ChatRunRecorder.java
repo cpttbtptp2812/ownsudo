@@ -76,6 +76,7 @@ public class ChatRunRecorder {
         recordEvent("STEP_" + normalizeEventStatus(status), status, payload);
         if (stepId != null && !stepId.isBlank()) {
             String spanId = safeSpanId(stepId);
+            captureProviderUsage(ctx, spanId, details);
             LocalDateTime now = LocalDateTime.ofEpochSecond(timestamp / 1000, (int) (timestamp % 1000) * 1_000_000, ZoneOffset.UTC);
             LocalDateTime started = ctx.spanStarts.computeIfAbsent(spanId, ignored -> now);
             String spanStatus = "FAILED".equalsIgnoreCase(status) || "ERROR".equalsIgnoreCase(status)
@@ -115,20 +116,26 @@ public class ChatRunRecorder {
         if (ctx == null) return;
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         String status = "ABORTED".equalsIgnoreCase(outcome) ? "UNKNOWN" : "COMPLETED";
+        if (!ctx.providerUsageSeen && providerUsage) {
+            ctx.inputTokens += inputTokens == null ? 0 : inputTokens;
+            ctx.outputTokens += outputTokens == null ? 0 : outputTokens;
+            ctx.providerUsageSeen = true;
+        }
+        boolean hasUsage = ctx.providerUsageSeen;
         jdbc.update("""
                 UPDATE chat_agent_run
                    SET status = ?, ended_at = ?, duration_ms = ?, input_tokens = ?,
                        output_tokens = ?, total_tokens = ?, usage_source = ?, updated_at = ?
                  WHERE run_id = ?
                 """, status, now, Duration.between(ctx.startedAt, now).toMillis(),
-                providerUsage ? inputTokens : null, providerUsage ? outputTokens : null,
-                providerUsage && inputTokens != null && outputTokens != null ? inputTokens + outputTokens : null,
-                providerUsage ? "PROVIDER" : "MISSING", now, ctx.runId);
+                hasUsage ? ctx.inputTokens : null, hasUsage ? ctx.outputTokens : null,
+                hasUsage ? ctx.inputTokens + ctx.outputTokens : null,
+                hasUsage ? "PROVIDER" : "MISSING", now, ctx.runId);
         recordEvent("RUN_" + status, status, Map.of(
                 "durationMs", Duration.between(ctx.startedAt, now).toMillis(),
-                "usageSource", providerUsage ? "PROVIDER" : "MISSING",
-                "inputTokens", providerUsage && inputTokens != null ? inputTokens : -1,
-                "outputTokens", providerUsage && outputTokens != null ? outputTokens : -1));
+                "usageSource", hasUsage ? "PROVIDER" : "MISSING",
+                "inputTokens", hasUsage ? ctx.inputTokens : -1,
+                "outputTokens", hasUsage ? ctx.outputTokens : -1));
     }
 
     public void fail(Throwable error) {
@@ -178,29 +185,62 @@ public class ChatRunRecorder {
             int count = jdbc.queryForObject("SELECT COUNT(*) FROM chat_agent_run_span WHERE run_id = ? AND span_id = ?",
                     Integer.class, ctx.runId, spanId);
             Long duration = ended == null ? null : Duration.between(started, ended).toMillis();
+            Long inputTokens = tokenValue(attributes, "prompt_tokens", "input_tokens");
+            Long outputTokens = tokenValue(attributes, "completion_tokens", "output_tokens");
+            String usageSource = inputTokens != null || outputTokens != null ? "PROVIDER" : "MISSING";
             if (count == 0) {
                 jdbc.update("""
                         INSERT INTO chat_agent_run_span
                             (run_id, span_id, parent_span_id, name, span_kind, status,
-                             started_at, ended_at, duration_ms, attributes_json)
-                        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+                             started_at, ended_at, duration_ms, input_tokens, output_tokens, usage_source, attributes_json)
+                        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, ctx.runId, spanId, blankToDefault(name, "Agent step"),
-                        normalizeKind(kind), status, started, ended, duration, json);
+                        normalizeKind(kind), status, started, ended, duration, inputTokens, outputTokens, usageSource, json);
             } else {
                 jdbc.update("""
                         UPDATE chat_agent_run_span SET name = ?, span_kind = ?, status = ?,
-                            started_at = ?, ended_at = ?, duration_ms = ?, attributes_json = ?
+                            started_at = ?, ended_at = ?, duration_ms = ?, input_tokens = ?,
+                            output_tokens = ?, usage_source = ?, attributes_json = ?
                          WHERE run_id = ? AND span_id = ?
                         """, blankToDefault(name, "Agent step"), normalizeKind(kind), status,
-                        started, ended, duration, json, ctx.runId, spanId);
+                        started, ended, duration, inputTokens, outputTokens, usageSource, json, ctx.runId, spanId);
             }
         } catch (Exception e) {
             throw new IllegalStateException("Could not persist built-in Agent span", e);
         }
     }
 
+    private void captureProviderUsage(RunContext ctx, String spanId, Map<String, Object> details) {
+        if (details == null || ctx.usageSpanIds.contains(spanId)) return;
+        Object raw = details.get("usage");
+        if (!(raw instanceof Map<?, ?> usage)) return;
+        Long input = number(usage.get("prompt_tokens"));
+        if (input == null) input = number(usage.get("input_tokens"));
+        Long output = number(usage.get("completion_tokens"));
+        if (output == null) output = number(usage.get("output_tokens"));
+        if (input == null && output == null) return;
+        if (ctx.usageSpanIds.add(spanId)) {
+            ctx.inputTokens += input == null ? 0 : input;
+            ctx.outputTokens += output == null ? 0 : output;
+            ctx.providerUsageSeen = true;
+        }
+    }
+
+    private Long tokenValue(Map<String, Object> attributes, String first, String second) {
+        Object details = attributes.get("details");
+        if (!(details instanceof Map<?, ?> detailMap)) return null;
+        Object raw = detailMap.get("usage");
+        if (!(raw instanceof Map<?, ?> usage)) return null;
+        Long value = number(usage.get(first));
+        return value == null ? number(usage.get(second)) : value;
+    }
+    private Long number(Object value) {
+        if (value instanceof Number n && n.longValue() >= 0) return n.longValue();
+        return null;
+    }
+
     private JsonNode sanitize(JsonNode value) {
-        if (value == null || value.isNull()) return mapper.nullNode();
+        if (value == null || value.isNull()) return mapper.getNodeFactory().nullNode();
         if (value.isObject()) {
             ObjectNode safe = mapper.createObjectNode();
             value.fields().forEachRemaining(entry -> {
@@ -269,6 +309,10 @@ public class ChatRunRecorder {
         final LocalDateTime startedAt;
         final AtomicInteger sequence = new AtomicInteger();
         final Map<String, LocalDateTime> spanStarts = new ConcurrentHashMap<>();
+        final Set<String> usageSpanIds = ConcurrentHashMap.newKeySet();
+        volatile long inputTokens = 0;
+        volatile long outputTokens = 0;
+        volatile boolean providerUsageSeen = false;
         RunContext(String runId, String traceId, String sessionId, String agentId, LocalDateTime startedAt) {
             this.runId = runId; this.traceId = traceId; this.sessionId = sessionId;
             this.agentId = agentId; this.startedAt = startedAt;
