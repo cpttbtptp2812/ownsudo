@@ -90,7 +90,7 @@ public class TraceController {
             return ResponseEntity.ok(Map.of(
                     "traceId", traceId,
                     "judgeModel", judgeModel,
-                    "scores", result,
+                    "scores", evaluation.get("scores"),
                     "evaluation", evaluation
             ));
         } catch (Exception e) {
