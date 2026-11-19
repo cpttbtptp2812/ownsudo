@@ -131,7 +131,7 @@ public class ChatRunRecorder {
     public void complete(Integer inputTokens, Integer outputTokens, boolean providerUsage, String outcome) {
         RunContext ctx = active.get();
         if (ctx == null) return;
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now();
         String status = "ABORTED".equalsIgnoreCase(outcome) ? "UNKNOWN" : "COMPLETED";
         if (!ctx.providerUsageSeen && providerUsage) {
             ctx.inputTokens += inputTokens == null ? 0 : inputTokens;
@@ -158,7 +158,7 @@ public class ChatRunRecorder {
     public void fail(Throwable error) {
         RunContext ctx = active.get();
         if (ctx == null) return;
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now();
         jdbc.update("""
                 UPDATE chat_agent_run SET status = 'ERROR', ended_at = ?, duration_ms = ?,
                     error_message = ?, input_tokens = ?, output_tokens = ?, total_tokens = ?,
@@ -187,7 +187,7 @@ public class ChatRunRecorder {
         if (ctx == null) return;
         try {
             long seq = ctx.sequence.incrementAndGet();
-            LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+            LocalDateTime now = LocalDateTime.now();
             JsonNode safe = sanitize(mapper.valueToTree(payload));
             jdbc.update("""
                     INSERT INTO chat_agent_run_event
