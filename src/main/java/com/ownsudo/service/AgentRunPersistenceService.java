@@ -61,7 +61,7 @@ public class AgentRunPersistenceService {
                 : Duration.between(startedAt, endedAt).toMillis();
 
         String sessionId = jsonAttribute(span.getAttributesJson(), "session.id");
-        String conversationId = jsonAttribute(span.getAttributesJson(), "conversation.id");
+        String conversationId = firstJsonAttribute(span.getAttributesJson(), "conversation.id", "gen_ai.conversation.id");
         Object rootName = aggregate.get("root_name");
         String name = rootName instanceof String value && !value.isBlank()
                 ? value : span.getName() == null || span.getName().isBlank() ? "Agent run" : span.getName();
@@ -166,10 +166,20 @@ public class AgentRunPersistenceService {
     }
 
     private String jsonAttribute(String json, String key) {
+        return firstJsonAttribute(json, key);
+    }
+
+    private String firstJsonAttribute(String json, String... keys) {
         if (json == null || json.isBlank()) return null;
         try {
-            var value = mapper.readTree(json).get(key);
-            return value == null || value.isNull() || value.asText().isBlank() ? null : value.asText();
+            var attributes = mapper.readTree(json);
+            for (String key : keys) {
+                var value = attributes.get(key);
+                if (value != null && !value.isNull() && !value.asText().isBlank()) {
+                    return value.asText();
+                }
+            }
+            return null;
         } catch (Exception ignored) {
             return null;
         }
