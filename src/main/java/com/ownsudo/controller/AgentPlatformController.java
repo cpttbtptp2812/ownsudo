@@ -832,7 +832,7 @@ public class AgentPlatformController {
 
                 while (currentDepth <= 3 && isClientConnected.get()) {
                     try {
-                        String modelStepId = "model-call-" + currentDepth + "-" + UUID.randomUUID().toString().substring(0, 8);
+                        String modelStepId = "model-call-round-" + currentDepth;
                         Map<String, Object> modelRequestDetail = new LinkedHashMap<>();
                         modelRequestDetail.put("model", rawModel != null ? rawModel : llmClientService.getConfig("LLM_MODEL", "configured-model"));
                         modelRequestDetail.put("provider", llmClientService.getConfig("LLM_PROVIDER", "configured-provider"));
@@ -1041,7 +1041,7 @@ public class AgentPlatformController {
                             failedModelDetail.put("content_capture", "disabled");
                         }
                         sendExecutionEvent(emitter, isClientConnected,
-                                "model-call-failed-" + currentDepth + "-" + UUID.randomUUID().toString().substring(0, 8),
+                                "model-call-round-" + currentDepth,
                                 40 + currentDepth, "llm", "failed", "模型请求失败 · 第 " + currentDepth + " 轮",
                                 "模型调用发生异常，已记录真实错误", failedModelDetail);
                         System.err.println("[ToolLoop] 工具调用循环检查异常: " + e.getMessage());
