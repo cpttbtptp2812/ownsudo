@@ -1006,8 +1006,8 @@ public class AgentPlatformController {
                                                 toolResultTrace.put("retryable", toolResult.isRetryable());
                                             }
                                             toolDetail.put("tool_result", boundedTraceValue(toolResultTrace));
-                                            toolDetail.put("parameters", functionArgs);
-                                            toolDetail.put("result", toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage());
+                                            toolDetail.put("parameters", boundedTraceValue(parseJsonOrText(functionArgs)));
+                                            toolDetail.put("result", boundedTraceValue(toolResult.isSuccess() ? toolResult.getData() : toolResult.getErrorMessage()));
                                             toolDetail.put("durationMs", toolDuration);
                                             toolStepPayload.put("rightDetail", toolDetail);
                                             toolStepPayload.put("timestamp", System.currentTimeMillis());
