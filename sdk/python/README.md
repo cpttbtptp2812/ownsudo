@@ -101,6 +101,20 @@ python -m pip install -e ".[otel-json,openinference-openai-agents]" "openai-agen
 python examples/openinference_openai_agents.py
 ```
 
+MCP client/server context propagation is also available as an optional extra. It does not create spans by itself; combine it with an LLM/framework instrumentor and call it before creating MCP transports:
+
+```bash
+python -m pip install -e ".[otel-json,openinference-mcp]"
+```
+
+```python
+from openinference.instrumentation.mcp import MCPInstrumentor
+
+MCPInstrumentor().instrument()
+```
+
+This lets the active Agent trace context cross supported MCP transports so client and server spans can remain in one distributed trace.
+
 For other frameworks, install the matching optional instrumentation package and use the same OTLP/JSON exporter. Available upstream instrumentors include LangChain, OpenAI Agents, LlamaIndex, CrewAI, Haystack, PydanticAI, and MCP. Their versions and framework compatibility are maintained upstream; OwnAgent consumes the resulting OpenTelemetry spans rather than vendoring each framework adapter.
 
 ## Quick start: run a local Python tool
