@@ -34,6 +34,7 @@ class AgentRunPersistenceServiceTest {
         aggregate.put("started_at", Timestamp.valueOf(LocalDateTime.parse("2026-11-19T10:00:00")));
         aggregate.put("ended_at", Timestamp.valueOf(LocalDateTime.parse("2026-11-19T10:00:02")));
         when(jdbc.queryForMap(anyString(), eq("agent-1"), eq("trace-1"))).thenReturn(aggregate);
+        when(jdbc.queryForObject(anyString(), eq(Integer.class), eq("agent-1"), eq("run-1"))).thenReturn(0);
         doReturn(1).when(jdbc).update(anyString(), any(Object[].class));
 
         TraceSpanEntity span = new TraceSpanEntity();
