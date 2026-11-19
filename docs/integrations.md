@@ -22,7 +22,7 @@ OwnAgent remains the local system of record. Export failures are logged and do n
 
 | Project | License / fit | Decision |
 | --- | --- | --- |
-| [Promptfoo](https://github.com/promptfoo/promptfoo) | Apache-2.0; mature prompt/agent eval CLI, red-team and regression workflows | Integration Hub provides CLI examples and imports JSON/JSONL reports into agent-scoped persistent history; OwnAgent does not execute the Promptfoo CLI server-side. |
+| [Promptfoo](https://github.com/promptfoo/promptfoo) | Apache-2.0; mature prompt/agent eval CLI, red-team and regression workflows | Integration Hub provides CLI examples and imports JSON/JSONL reports into Agent-scoped persistent history; reports can optionally link to a Run ID after the backend verifies that Run belongs to the same Agent. OwnAgent does not execute the Promptfoo CLI server-side. |
 | [DeepEval](https://github.com/confident-ai/deepeval) | Apache-2.0; pytest-style LLM evaluation and metric library | Optional Python evaluation extra; map results into OwnAgent Evaluation records. |
 | [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | MIT; official MCP server/client debugging UI | Integration Hub launches the official local Web / CLI / TUI tool; do not fork or embed its UI. |
 | [OpenInference](https://github.com/Arize-ai/openinference) | Apache-2.0 instrumentation conventions and framework instrumentation | Integrated as optional SDK extras for OpenAI, LangChain and OpenAI Agents; expand examples and compatibility tests. |
@@ -42,7 +42,7 @@ OwnAgent remains the local system of record. Export failures are logged and do n
 ## Product gaps to close
 
 - Persistent Evaluation datasets, experiments, evaluator results and comparison history.
-- Link imported Promptfoo / DeepEval evaluation results to individual OwnAgent Run IDs; Promptfoo reports currently persist as agent-scoped report records and are not yet joined to a specific Run.
+- Persisted experiment comparisons across multiple Promptfoo / DeepEval report imports and richer evaluator metrics.
 - Expand OpenInference examples and test framework/version compatibility; current OpenAI and LangChain examples are starter integrations.
 - A first-class embedded MCP Inspector backed by the existing MCP tool registry. The official standalone MCP Inspector can already be launched locally from the Integration Hub.
 - Replay based on persisted events, with explicit safeguards against repeating external side effects.
