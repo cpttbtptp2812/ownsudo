@@ -73,7 +73,7 @@ public class OtlpTraceController {
             }
         }
 
-        if (accepted > 0) exporter.forward(request);
+        if (accepted > 0 && rejected == 0) exporter.forward(request);
         return ResponseEntity.accepted().body(Map.of(
                 "acceptedSpans", accepted,
                 "rejectedSpans", rejected,
@@ -95,17 +95,19 @@ public class OtlpTraceController {
         Long input = number(attributes, "gen_ai.usage.input_tokens", "llm.token_count.prompt");
         Long output = number(attributes, "gen_ai.usage.output_tokens", "llm.token_count.completion");
         Long total = number(attributes, "gen_ai.usage.total_tokens");
-        String status = switch (span.path("status").path("code").asInt(0)) {
-            case 1 -> "OK";
-            case 2 -> "ERROR";
+        String rawStatus = text(span.path("status"), "code").toUpperCase();
+        String status = switch (rawStatus) {
+            case "1", "STATUS_CODE_OK" -> "OK";
+            case "2", "STATUS_CODE_ERROR" -> "ERROR";
             default -> "UNSET";
         };
-        String kind = switch (span.path("kind").asInt(0)) {
-            case 1 -> "INTERNAL";
-            case 2 -> "SERVER";
-            case 3 -> "CLIENT";
-            case 4 -> "PRODUCER";
-            case 5 -> "CONSUMER";
+        String rawKind = text(span, "kind").toUpperCase();
+        String kind = switch (rawKind) {
+            case "1", "SPAN_KIND_INTERNAL" -> "INTERNAL";
+            case "2", "SPAN_KIND_SERVER" -> "SERVER";
+            case "3", "SPAN_KIND_CLIENT" -> "CLIENT";
+            case "4", "SPAN_KIND_PRODUCER" -> "PRODUCER";
+            case "5", "SPAN_KIND_CONSUMER" -> "CONSUMER";
             default -> "INTERNAL";
         };
         String runId = firstText(attributes, "ownagent.run.id", "session.id", "conversation.id");
