@@ -6,6 +6,17 @@ OwnAgent is an open-source engineering platform for the parts of Agent developme
 
 It is not another chat wrapper and does not aim to replace every Agent framework. OwnAgent provides a focused execution and engineering layer, with REST and an independently installable Python SDK for integrating externally built Agents.
 
+## Persisted Agent Run history
+
+The observability API now materializes a queryable Run index from accepted trace spans:
+
+- `GET /api/v1/runs` lists recent runs for the authenticated Agent.
+- `GET /api/v1/runs/{runId}` returns the Run summary, ordered spans, and persisted span lifecycle events.
+- `agent_run` stores the Run-level projection; `agent_run_event` stores append-only span lifecycle observations; `agent_trace_span` remains the detailed span source of truth.
+- Provider token totals are aggregated only from spans marked `PROVIDER`; estimated or missing usage is never represented as provider usage.
+
+See [docs/run-history.md](docs/run-history.md). The additive V8 Flyway migration is applied by the production profile; no production database was modified as part of this change.
+
 ## What it does
 
 - **Run Actions:** submit tool operations through an Agent-scoped API and persist their lifecycle.
