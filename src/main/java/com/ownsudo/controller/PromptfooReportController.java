@@ -127,7 +127,10 @@ public class PromptfooReportController {
         if (node == null || node.isValueNode()) return node == null ? mapper.getNodeFactory().nullNode() : node.deepCopy();
         if (node.isArray()) {
             ArrayNode result = mapper.createArrayNode();
-            node.forEach(value -> result.add(sanitize(value)));
+            node.forEach(value -> {
+                JsonNode sanitized = sanitize(value);
+                if (!sanitized.isNull() || value.isNull()) result.add(sanitized);
+            });
             return result;
         }
         // OpenInference / provider payloads may encode hidden channels as message
