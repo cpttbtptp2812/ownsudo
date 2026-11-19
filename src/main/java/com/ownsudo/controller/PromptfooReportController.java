@@ -34,6 +34,15 @@ public class PromptfooReportController {
             if (request == null) return badRequest("EMPTY_REPORT", "Request body is required.");
             String fileName = safeFileName(String.valueOf(request.getOrDefault("fileName", "promptfoo-report.json")));
             String raw = String.valueOf(request.getOrDefault("content", ""));
+            String runId = request.get("runId") == null ? null : String.valueOf(request.get("runId")).trim();
+            if (runId != null && runId.isBlank()) runId = null;
+            if (runId != null) {
+                Integer matchingRuns = jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM agent_run WHERE agent_id = ? AND run_id = ?", Integer.class, agentId, runId);
+                if (matchingRuns == null || matchingRuns == 0) {
+                    return badRequest("RUN_NOT_FOUND", "The supplied Run ID does not belong to this Agent or does not exist.");
+                }
+            }
             byte[] bytes = raw.getBytes(StandardCharsets.UTF_8);
             if (bytes.length == 0) return badRequest("EMPTY_REPORT", "Report content is empty.");
             if (bytes.length > MAX_REPORT_BYTES) return badRequest("REPORT_TOO_LARGE", "Report exceeds the 20 MB limit.");
@@ -80,13 +89,13 @@ public class PromptfooReportController {
             LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
             jdbc.update("""
                     INSERT INTO agent_promptfoo_report
-                        (report_id, agent_id, file_name, report_format, result_count,
+                        (report_id, agent_id, run_id, file_name, report_format, result_count,
                          success_count, failure_count, error_count, report_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, reportId, agentId, fileName, format, rows.size(),
                     successes, failures, errors, reportJson, now);
             return ResponseEntity.status(201).body(Map.of(
-                    "reportId", reportId, "fileName", fileName, "format", format,
+                    "reportId", reportId, "runId", runId == null ? "" : runId, "fileName", fileName, "format", format,
                     "resultCount", rows.size(), "successCount", successes,
                     "failureCount", failures, "errorCount", errors, "createdAt", now.toString()));
         } catch (Exception error) {
@@ -98,7 +107,7 @@ public class PromptfooReportController {
     public ResponseEntity<?> list(
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId) {
         return ResponseEntity.ok(jdbc.queryForList("""
-                SELECT report_id AS reportId, file_name AS fileName, report_format AS format,
+                SELECT report_id AS reportId, run_id AS runId, file_name AS fileName, report_format AS format,
                        result_count AS resultCount, success_count AS successCount,
                        failure_count AS failureCount, error_count AS errorCount, created_at AS createdAt
                   FROM agent_promptfoo_report
