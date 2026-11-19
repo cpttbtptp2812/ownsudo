@@ -343,11 +343,11 @@ public class LlmClientService {
         String baseUrl = configuredBaseUrl.endsWith("/") ? configuredBaseUrl : configuredBaseUrl + "/";
         String endpoint = baseUrl + "chat/completions";
         String system = "You are an objective AI Agent evaluator. Evaluate only the supplied task, answer and execution evidence. "
-NaN
-NaN
-NaN
-        String user = "TASK:\\n" + safe(task) + "\\n\\nFINAL ANSWER:\\n" + safe(answer)
-NaN
+                + "Return one valid JSON object with an overall score and concise dimension scores. Do not invent evidence. "
+                + "Apply this rubric: " + safe(rubric);
+        String user = "TASK:\\n" + safe(task)
+                + "\\n\\nFINAL ANSWER:\\n" + safe(answer)
+                + "\\n\\nEXECUTION EVIDENCE:\\n" + safe(evidence);
         List<Map<String, String>> messages = List.of(
                 Map.of("role", "system", "content", system),
                 Map.of("role", "user", "content", user)
@@ -358,8 +358,9 @@ NaN
         body.put("temperature", 0.0);
         body.put("stream", false);
         HttpRequest.Builder req = HttpRequest.newBuilder().uri(URI.create(endpoint))
-NaN
-NaN
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(60))
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)));
         if (apiKey != null && !apiKey.isBlank() && !apiKey.startsWith("sk-***")) req.header("Authorization", "Bearer " + apiKey.trim());
         HttpResponse<String> response = httpClient.send(req.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) throw new IllegalStateException("Judge provider returned HTTP " + response.statusCode());
