@@ -15,7 +15,7 @@ The observability API now materializes a queryable Run index from accepted trace
 - `agent_run` stores the Run-level projection; `agent_run_event` stores append-only span lifecycle observations; `agent_trace_span` remains the detailed span source of truth.
 - Provider token totals are aggregated only from spans marked `PROVIDER`; estimated or missing usage is never represented as provider usage.
 
-See [docs/run-history.md](docs/run-history.md). The additive V8 Flyway migration is applied by the production profile; no production database was modified as part of this change.
+See [docs/run-history.md](docs/run-history.md). The additive V8 Flyway migration is applied by the production profile; no production database was modified as part of this change. See [docs/integrations.md](docs/integrations.md) for the upstream reuse register, current OTLP export hooks, license boundaries, and recommended Promptfoo / DeepEval / MCP Inspector integrations.
 
 ## What it does
 
