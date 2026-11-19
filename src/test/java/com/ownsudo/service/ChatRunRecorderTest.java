@@ -37,6 +37,6 @@ class ChatRunRecorderTest {
         verify(jdbc, atLeast(4)).update(contains("INSERT INTO chat_agent_run_event"), any(Object[].class));
         verify(jdbc, atLeast(2)).update(contains("INSERT INTO chat_agent_run_span"), any(Object[].class));
         verify(jdbc).update(contains("SET status = ?"), argThat(args ->
-                runId.equals(args[args.length - 1]) && "PROVIDER".equals(args[args.length - 2])));
+                runId.equals(args[args.length - 1]) && "PROVIDER".equals(args[6])));
     }
 }
