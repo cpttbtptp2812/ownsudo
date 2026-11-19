@@ -29,7 +29,7 @@ GET  /api/v1/evaluations/promptfoo
 GET  /api/v1/evaluations/promptfoo/{reportId}
 ~~~
 
-Imports are scoped to the authenticated Agent, limited to 20 MB, and have internal reasoning/analysis fields removed before persistence. Reports are stored independently from Run evaluations; linking a report to a specific Run remains future work. Apply Flyway V10 when deploying this branch.
+Imports are scoped to the authenticated Agent, limited to 20 MB, and have internal reasoning/analysis fields removed before persistence. Reports are stored per Agent and may optionally be linked to a Run ID; the backend verifies that the Run belongs to the authenticated Agent. Apply Flyway V10 when deploying this branch.
 
 ## What it does
 
