@@ -1011,6 +1011,9 @@ public class AgentPlatformController {
                                             toolDetail.put("durationMs", toolDuration);
                                             toolStepPayload.put("rightDetail", toolDetail);
                                             toolStepPayload.put("timestamp", System.currentTimeMillis());
+                                            // Persist the full tool event alongside model events. The map key is
+                                            // only a unique storage key; the event keeps its semantic seq=5.
+                                            traceStepsMap.put(1000 + traceStepsMap.size(), toolStepPayload);
                                             emitter.send(SseEmitter.event().name("agent_step").data(objectMapper.writeValueAsString(toolStepPayload)));
 
                                             // 若触发生产级高危写操作安全拦截，向前端推送 approval_required 事件
