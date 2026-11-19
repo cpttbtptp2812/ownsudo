@@ -21,6 +21,8 @@ import java.math.BigInteger;
 import java.time.Instant;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Base64;
+import java.util.HexFormat;
 
 /**
  * OTLP/HTTP JSON receiver. It accepts standard OpenTelemetry ExportTraceServiceRequest
@@ -68,6 +70,7 @@ public class OtlpTraceController {
         try {
             ExportTraceServiceRequest message = ExportTraceServiceRequest.parseFrom(payload);
             JsonNode request = mapper.readTree(JsonFormat.printer().print(message));
+            normalizeProtobufSpanIds(request);
             return ingestPayload(agentId, request);
         } catch (InvalidProtocolBufferException error) {
             return ResponseEntity.badRequest().body(Map.of("error", Map.of(
@@ -75,6 +78,43 @@ public class OtlpTraceController {
         } catch (Exception error) {
             return ResponseEntity.badRequest().body(Map.of("error", Map.of(
                     "code", "INVALID_OTLP_REQUEST", "message", error.getMessage() == null ? "Could not decode OTLP request" : error.getMessage())));
+        }
+    }
+
+    /**
+     * Protobuf JSON mapping encodes bytes fields as Base64, while OTLP/HTTP JSON
+     * represents trace/span identifiers as lowercase hex strings. Convert the
+     * three identifier fields before handing the payload to the shared JSON path.
+     */
+    private void normalizeProtobufSpanIds(JsonNode request) {
+        JsonNode resourceSpansList = request.path("resourceSpans");
+        if (!resourceSpansList.isArray()) return;
+        for (JsonNode resourceSpans : resourceSpansList) {
+            JsonNode scopes = resourceSpans.path("scopeSpans").isArray()
+                    ? resourceSpans.path("scopeSpans") : resourceSpans.path("instrumentationLibrarySpans");
+            if (!scopes.isArray()) continue;
+            for (JsonNode scope : scopes) {
+                JsonNode spanList = scope.path("spans");
+                if (!spanList.isArray()) continue;
+                for (JsonNode rawSpan : spanList) {
+                    if (!(rawSpan instanceof ObjectNode span)) continue;
+                    for (String field : new String[]{"traceId", "spanId", "parentSpanId"}) {
+                        JsonNode value = span.get(field);
+                        if (value == null || !value.isTextual()) continue;
+                        String encoded = value.asText();
+                        int expectedHexLength = "traceId".equals(field) ? 32 : 16;
+                        if (encoded.matches("(?i)[0-9a-f]{" + expectedHexLength + "}")) continue;
+                        try {
+                            byte[] decoded = Base64.getDecoder().decode(encoded);
+                            if (decoded.length * 2 == expectedHexLength) {
+                                span.put(field, HexFormat.of().formatHex(decoded));
+                            }
+                        } catch (IllegalArgumentException ignored) {
+                            // Leave malformed values intact so normal span validation rejects them.
+                        }
+                    }
+                }
+            }
         }
     }
 
