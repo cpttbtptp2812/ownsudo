@@ -6,7 +6,7 @@ This document is the integration decision register. "Supported" means there is a
 
 | Project / standard | What OwnAgent reuses | Status |
 | --- | --- | --- |
-| [OpenTelemetry](https://opentelemetry.io/) | OTLP/HTTP JSON trace ingestion, span identity, parent/child relationships, token usage attributes and live span events | Implemented; use the official OTLP JSON exporter (the receiver does not accept OTLP protobuf) |
+| [OpenTelemetry](https://opentelemetry.io/) | OTLP/HTTP JSON and Protobuf trace ingestion, span identity, parent/child relationships, token usage attributes and live span events | Implemented; use either official OTLP HTTP exporter |
 | [AgentPrism](https://github.com/evilmartians/agent-prism) | MIT-licensed OpenTelemetry data adapter, span tree construction, token helpers and required types | Vendored data layer only; its full UI is not bundled |
 | [Langfuse](https://github.com/langfuse/langfuse) | Existing OTLP export hook can forward accepted trace payloads to a configured compatible receiver | Configurable export path; not an embedded Langfuse deployment or a tested turnkey connector |
 | [Arize Phoenix](https://github.com/Arize-ai/phoenix) | Existing OTLP export hook can forward accepted trace payloads to a configured compatible receiver | Configurable export path; not an embedded Phoenix deployment or a tested turnkey connector |
@@ -22,7 +22,7 @@ OwnAgent remains the local system of record. Export failures are logged and do n
 
 | Project | License / fit | Decision |
 | --- | --- | --- |
-| [Promptfoo](https://github.com/promptfoo/promptfoo) | Apache-2.0; mature prompt/agent eval CLI, red-team and regression workflows | Integration Hub provides CLI examples and local JSON/JSONL report preview; server-side execution and persistence remain future work. |
+| [Promptfoo](https://github.com/promptfoo/promptfoo) | Apache-2.0; mature prompt/agent eval CLI, red-team and regression workflows | Integration Hub provides CLI examples and imports JSON/JSONL reports into agent-scoped persistent history; OwnAgent does not execute the Promptfoo CLI server-side. |
 | [DeepEval](https://github.com/confident-ai/deepeval) | Apache-2.0; pytest-style LLM evaluation and metric library | Optional Python evaluation extra; map results into OwnAgent Evaluation records. |
 | [MCP Inspector](https://github.com/modelcontextprotocol/inspector) | MIT; official MCP server/client debugging UI | Integration Hub launches the official local Web / CLI / TUI tool; do not fork or embed its UI. |
 | [OpenInference](https://github.com/Arize-ai/openinference) | Apache-2.0 instrumentation conventions and framework instrumentation | Integrated as optional SDK extras for OpenAI, LangChain and OpenAI Agents; expand examples and compatibility tests. |
@@ -42,7 +42,7 @@ OwnAgent remains the local system of record. Export failures are logged and do n
 ## Product gaps to close
 
 - Persistent Evaluation datasets, experiments, evaluator results and comparison history.
-- A persistent Promptfoo / DeepEval adapter that writes imported evaluation results against OwnAgent Run IDs. The frontend currently previews Promptfoo JSON reports locally; no server-side execution or persistence yet.
+- Link imported Promptfoo / DeepEval evaluation results to individual OwnAgent Run IDs; Promptfoo reports currently persist as agent-scoped report records and are not yet joined to a specific Run.
 - Expand OpenInference examples and test framework/version compatibility; current OpenAI and LangChain examples are starter integrations.
 - A first-class embedded MCP Inspector backed by the existing MCP tool registry. The official standalone MCP Inspector can already be launched locally from the Integration Hub.
 - Replay based on persisted events, with explicit safeguards against repeating external side effects.
