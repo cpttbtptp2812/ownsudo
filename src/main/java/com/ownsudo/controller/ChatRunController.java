@@ -1,6 +1,7 @@
 package com.ownsudo.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.ownsudo.security.AgentApiKeyFilter;
 import com.ownsudo.service.ChatRunRecorder;
 import com.ownsudo.service.LlmClientService;
@@ -34,7 +35,9 @@ public class ChatRunController {
                        agent_id AS agentId, name, model, provider, status,
                        started_at AS startedAt, ended_at AS endedAt, duration_ms AS durationMs,
                        input_tokens AS inputTokens, output_tokens AS outputTokens,
-                       total_tokens AS totalTokens, usage_source AS usageSource
+                       total_tokens AS totalTokens, usage_source AS usageSource,
+                       (SELECT COUNT(*) FROM chat_agent_run_span s WHERE s.run_id = chat_agent_run.run_id) AS spanCount,
+                       (SELECT COUNT(*) FROM chat_agent_run_span s WHERE s.run_id = chat_agent_run.run_id AND s.status = 'ERROR') AS errorCount
                   FROM chat_agent_run WHERE session_id = ?
                  ORDER BY started_at DESC LIMIT 100
                 """, sessionId));
@@ -54,6 +57,7 @@ public class ChatRunController {
         List<Map<String, Object>> spans = jdbc.queryForList("""
                 SELECT span_id AS spanId, parent_span_id AS parentSpanId, name, span_kind AS spanKind,
                        status, started_at AS startedAt, ended_at AS endedAt, duration_ms AS durationMs,
+                       input_tokens AS inputTokens, output_tokens AS outputTokens, usage_source AS usageSource,
                        attributes_json AS attributes
                   FROM chat_agent_run_span WHERE run_id = ? ORDER BY started_at ASC, span_id ASC
                 """, runId);
