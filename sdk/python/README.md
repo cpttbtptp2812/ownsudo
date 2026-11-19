@@ -113,7 +113,7 @@ from openinference.instrumentation.mcp import MCPInstrumentor
 MCPInstrumentor().instrument()
 ```
 
-This lets the active Agent trace context cross supported MCP transports so client and server spans can remain in one distributed trace.
+This lets the active Agent trace context cross supported MCP transports so client and server spans can remain in one distributed trace. To have both sides appear under one Run in OwnAgent, configure both exporters with the same `ownagent.run.id` resource attribute; the MCP instrumentor propagates trace context, not Run identity by itself.
 
 For other frameworks, install the matching optional instrumentation package and use the same OTLP/JSON exporter. Available upstream instrumentors include LangChain, OpenAI Agents, LlamaIndex, CrewAI, Haystack, PydanticAI, and MCP. Their versions and framework compatibility are maintained upstream; OwnAgent consumes the resulting OpenTelemetry spans rather than vendoring each framework adapter.
 
