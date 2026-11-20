@@ -243,6 +243,56 @@ public class AgentPlatformController {
         return ResponseEntity.ok().build();
     }
 
+    @GetMapping("/tools")
+    public List<McpTool> getTools() {
+        return toolRepository.findAll();
+    }
+
+    @PostMapping("/tools")
+    public ResponseEntity<?> saveTool(@RequestBody(required = false) Map<String, Object> body) {
+        if (body == null) return ResponseEntity.badRequest().body(Map.of("error", "Tool definition is required"));
+        String functionName = String.valueOf(body.getOrDefault("functionName", "")).trim();
+        if (!functionName.matches("[A-Za-z][A-Za-z0-9_]{0,63}")) {
+            return ResponseEntity.badRequest().body(Map.of("error", "functionName must be a valid 1-64 character identifier"));
+        }
+        String description = String.valueOf(body.getOrDefault("description", "")).trim();
+        if (description.isBlank() || description.length() > 1024) {
+            return ResponseEntity.badRequest().body(Map.of("error", "description is required and must not exceed 1024 characters"));
+        }
+        String schemaText = String.valueOf(body.getOrDefault("parametersSchema", "{}"));
+        try {
+            var schema = objectMapper.readTree(schemaText);
+            if (schema == null || !schema.isObject()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "parametersSchema must be a JSON object"));
+            }
+        } catch (Exception invalidJson) {
+            return ResponseEntity.badRequest().body(Map.of("error", "parametersSchema must contain valid JSON"));
+        }
+        String id = String.valueOf(body.getOrDefault("id", "")).trim();
+        if (id.isBlank()) id = "tool-" + UUID.randomUUID().toString().substring(0, 12);
+        McpTool tool = toolRepository.findById(id).orElseGet(McpTool::new);
+        tool.setId(id);
+        tool.setServerName(String.valueOf(body.getOrDefault("serverName", "custom-plugin")));
+        tool.setFunctionName(functionName);
+        tool.setDisplayName(String.valueOf(body.getOrDefault("displayName", functionName)));
+        tool.setDescription(description);
+        tool.setCategory(String.valueOf(body.getOrDefault("category", "BUSINESS")));
+        tool.setEnabled(!Boolean.FALSE.equals(body.get("enabled")));
+        tool.setParametersSchema(schemaText);
+        tool.setRiskLevel(String.valueOf(body.getOrDefault("riskLevel", "LOW")));
+        tool.setIsSafe(!Boolean.TRUE.equals(body.get("isSafe")) ? true : Boolean.TRUE.equals(body.get("isSafe")));
+        Object timeout = body.get("timeoutMs");
+        if (timeout instanceof Number number) tool.setTimeoutMs(Math.max(100, Math.min(120000, number.intValue())));
+        return ResponseEntity.ok(toolRepository.save(tool));
+    }
+
+    @DeleteMapping("/tools/{id}")
+    public ResponseEntity<Void> deleteTool(@PathVariable String id) {
+        if (!toolRepository.existsById(id)) return ResponseEntity.notFound().build();
+        toolRepository.deleteById(id);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/chat/sessions")
     public List<ChatSessionEntity> getSessions() {
         return sessionRepository.findAllByOrderByUpdatedAtDesc();
