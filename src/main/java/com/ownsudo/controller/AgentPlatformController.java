@@ -1010,6 +1010,9 @@ public class AgentPlatformController {
                                     long toolStart = System.currentTimeMillis();
                                     ToolExecutor.ToolExecutionResult toolResult;
                                     try {
+                                        if (allowedToolNames != null && !allowedToolNames.contains(functionName)) {
+                                            throw new SecurityException("该 Agent 未绑定工具：" + functionName);
+                                        }
                                         toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
                                     } catch (RuntimeException toolError) {
                                         long failedDuration = System.currentTimeMillis() - toolStart;
