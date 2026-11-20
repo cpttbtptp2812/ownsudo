@@ -10,6 +10,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "examples"))
 import demo_agent
+
 from ownagent import LocalWorker, OwnAgentClient
 
 
