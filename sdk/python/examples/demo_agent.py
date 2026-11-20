@@ -396,9 +396,9 @@ def main() -> None:
                 print(f"Starting demo Agent run: {run_id}")
                 print(f"Task: {task}")
                 answer = run_agent(llm, ownagent, task, run_id)
-                print("\\nFinal answer:\\n")
+                print("\nFinal answer:\n")
                 print(answer)
-                print(f"\\nRun ID: {run_id}")
+                print(f"\nRun ID: {run_id}")
         finally:
             stop_worker.set()
             worker_thread.join(timeout=2)
