@@ -149,6 +149,32 @@ public class AssetController {
 
     @GetMapping("/tools")
     public List<McpTool> getTools() {
+        List<McpTool> existing = toolRepository.findAll();
+        Set<String> knownFunctions = existing.stream().map(McpTool::getFunctionName)
+                .filter(name -> name != null && !name.isBlank()).collect(java.util.stream.Collectors.toSet());
+        for (Map<String, Object> definition : toolExecutor.getToolDefinitions()) {
+            Object rawFunction = definition.get("function");
+            if (!(rawFunction instanceof Map<?, ?> function)) continue;
+            String functionName = String.valueOf(function.get("name"));
+            if (functionName.isBlank() || knownFunctions.contains(functionName)) continue;
+            McpTool builtin = new McpTool();
+            builtin.setId("builtin-" + functionName);
+            builtin.setServerName("builtin");
+            builtin.setFunctionName(functionName);
+            builtin.setDisplayName(functionName);
+            builtin.setDescription(String.valueOf(function.getOrDefault("description", "")));
+            builtin.setCategory("SYSTEM");
+            builtin.setRiskLevel("LOW");
+            builtin.setIsSafe(true);
+            builtin.setEnabled(true);
+            try {
+                builtin.setParametersSchema(objectMapper.writeValueAsString(function.get("parameters")));
+            } catch (Exception ignored) {
+                builtin.setParametersSchema("{}");
+            }
+            toolRepository.save(builtin);
+            knownFunctions.add(functionName);
+        }
         return toolRepository.findAll();
     }
 
