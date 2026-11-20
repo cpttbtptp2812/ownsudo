@@ -198,11 +198,15 @@ public class AgentPlatformController {
     @GetMapping("/agents/available-tools")
     public List<Map<String, Object>> getAvailableAgentTools() {
         List<Map<String, Object>> result = new ArrayList<>();
+        Set<String> disabledTools = toolRepository.findAll().stream()
+                .filter(tool -> !Boolean.TRUE.equals(tool.getEnabled()))
+                .map(McpTool::getFunctionName).filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
         for (Map<String, Object> definition : toolExecutor.getToolDefinitions()) {
             Object function = definition.get("function");
             if (!(function instanceof Map<?, ?> details)) continue;
             Object name = details.get("name");
-            if (name == null || name.toString().isBlank()) continue;
+            if (name == null || name.toString().isBlank() || disabledTools.contains(name.toString())) continue;
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("name", name.toString());
             Object description = details.get("description");
@@ -310,6 +314,10 @@ public class AgentPlatformController {
         String dbSystemPrompt = null;
         Double dbTemperature = null;
         AtomicReference<Set<String>> allowedToolNames = new AtomicReference<>(null);
+        Set<String> disabledToolNames = toolRepository.findAll().stream()
+                .filter(tool -> !Boolean.TRUE.equals(tool.getEnabled()))
+                .map(McpTool::getFunctionName).filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
         String agentName = "ownagent 调度中枢";
 
         if (agentId != null && !agentId.isBlank()) {
@@ -890,7 +898,12 @@ public class AgentPlatformController {
                 }
 
                 int currentDepth = 1;
-                List<Map<String, Object>> toolDefs = toolExecutor.getToolDefinitions(allowedToolNames.get());
+                List<Map<String, Object>> toolDefs = toolExecutor.getToolDefinitions(allowedToolNames.get()).stream()
+                        .filter(definition -> {
+                            Object function = definition.get("function");
+                            return function instanceof Map<?, ?> details
+                                    && !disabledToolNames.contains(String.valueOf(details.get("name")));
+                        }).toList();
                 int totalToolsExecuted = 0;
                 boolean hasPendingApproval = false;
                 Map<String, Object> pendingApprovalData = null;
@@ -1017,6 +1030,9 @@ public class AgentPlatformController {
                                     try {
                                         if (allowedToolNames.get() != null && !allowedToolNames.get().contains(functionName)) {
                                             throw new SecurityException("该 Agent 未绑定工具：" + functionName);
+                                        }
+                                        if (disabledToolNames.contains(functionName)) {
+                                            throw new SecurityException("工具已在工具管理中停用：" + functionName);
                                         }
                                         toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
                                     } catch (RuntimeException toolError) {
