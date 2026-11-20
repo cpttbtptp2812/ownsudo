@@ -256,3 +256,21 @@ def test_model_agent_action_worker_and_tool_result_complete_one_business_flow(mo
     assert any(message.get("role") == "tool" for message in model_requests[-1]["messages"])
     assert len(runtime.spans) >= 3
     assert any(span["name"] == "action.execute" and span["status"] == "OK" for span in runtime.spans)
+
+
+
+def test_parse_task_accepts_custom_prompt() -> None:
+    task = "Inspect the Action Runtime and explain its lifecycle."
+    assert demo_agent.parse_task([task]) == task
+
+
+def test_parse_task_uses_documented_default() -> None:
+    assert demo_agent.parse_task([]) == demo_agent.DEFAULT_TASK
+
+
+def test_parse_task_rejects_blank_prompt() -> None:
+    import pytest
+
+    with pytest.raises(SystemExit) as error:
+        demo_agent.parse_task(["   "])
+    assert error.value.code == 2

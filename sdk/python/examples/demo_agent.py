@@ -13,6 +13,7 @@ Optional:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -339,7 +340,23 @@ def run_agent(
     raise error
 
 
+DEFAULT_TASK = (
+    "Explain how OwnAgent's Action Runtime, Local Worker, approval, and UNKNOWN "
+    "state work together. Search the workspace first and cite the note IDs."
+)
+
+
+def parse_task(argv: list[str] | None = None) -> str:
+    parser = argparse.ArgumentParser(description="Run a real model-driven Agent through OwnAgent.")
+    parser.add_argument("task", nargs="?", default=DEFAULT_TASK, help="The task to give the model-driven Agent.")
+    task = parser.parse_args(argv).task.strip()
+    if not task:
+        parser.error("task must not be empty")
+    return task
+
+
 def main() -> None:
+    task = parse_task()
     base_url = os.environ["OWNAGENT_BASE_URL"]
     agent_key = os.environ["OWNAGENT_AGENT_API_KEY"]
     admin_key = os.environ["OWNAGENT_TOOL_ADMIN_API_KEY"]
@@ -381,12 +398,12 @@ def main() -> None:
                 headers={"Authorization": f"Bearer {openai_key}"},
                 timeout=60,
             ) as llm:
-                task = (
-                    "Explain how OwnAgent's Action Runtime, Local Worker, approval, and UNKNOWN "
-                    "state work together. Search the workspace first and cite the note IDs."
-                )
                 print(f"Starting demo Agent run: {run_id}")
-                print(run_agent(llm, ownagent, task, run_id))
+                print(f"Task: {task}")
+                answer = run_agent(llm, ownagent, task, run_id)
+                print("\nFinal answer:\n")
+                print(answer)
+                print(f"\nRun ID: {run_id}")
         finally:
             stop_worker.set()
             worker_thread.join(timeout=2)

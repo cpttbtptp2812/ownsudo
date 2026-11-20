@@ -115,10 +115,10 @@ export OPENAI_MODEL="gpt-4.1-mini"
 # Optional for an OpenAI-compatible provider:
 # export OPENAI_BASE_URL="https://your-provider.example/v1"
 
-python examples/demo_agent.py
+python examples/demo_agent.py "Explain how the UNKNOWN state prevents unsafe retries."
 ~~~
 
-The example registers a read-only workspace search tool, starts a Local Worker, asks the model to use the tool, submits the model's actual arguments as an Action, waits for the Worker result, and sends that result back to the model for its final answer. The Worker runs a Python function registered in the local process; it does not download or execute server-supplied code.
+You can pass any task as the final command-line argument; omit it to use the built-in example task. The example registers a read-only workspace search tool, starts a Local Worker, asks the model to use the tool, submits the model's actual arguments as an Action, waits for the Worker result, and sends that result back to the model for its final answer. The Worker runs a Python function registered in the local process; it does not download or execute server-supplied code.
 
 **3. Observe the same execution.** Open Studio → 运行观测 → 外部 Agent Runs, enter `OWNAGENT_AGENT_API_KEY`, and load Runs. The demo prints its Run ID. The displayed model and Action spans use the same Run ID and contain provider-reported token usage, actual timing, tool name, Action outcome, and errors. Prompt/response bodies remain off by default.
 
