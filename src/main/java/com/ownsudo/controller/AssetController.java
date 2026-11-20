@@ -162,7 +162,8 @@ public class AssetController {
             builtin.setServerName("builtin");
             builtin.setFunctionName(functionName);
             builtin.setDisplayName(functionName);
-            builtin.setDescription(String.valueOf(function.getOrDefault("description", "")));
+            Object description = function.get("description");
+            builtin.setDescription(description == null ? "" : description.toString());
             builtin.setCategory("SYSTEM");
             builtin.setRiskLevel("LOW");
             builtin.setIsSafe(true);
