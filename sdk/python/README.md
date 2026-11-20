@@ -6,16 +6,17 @@ The SDK can create and inspect Actions, register tool metadata with a separate d
 
 ## Provision an Agent API key
 
-The current preview provisions an Agent key through the backend bootstrap configuration; key creation is not yet exposed as a self-service Studio screen. Choose an existing Agent ID from the Studio Agent list, generate a key, and configure these Spring Boot environment variables before starting the backend:
+The preview uses a bootstrap Agent API key; self-service key creation is not part of the current core flow. Configure the actual Spring Boot environment variables before starting the backend:
 
 ```bash
-export APP_SECURITY_BOOTSTRAP_AGENT_ID="your-existing-agent-id"
-export APP_SECURITY_BOOTSTRAP_AGENT_API_KEY="oa_live_$(openssl rand -hex 32)"
+export OWNAGENT_BOOTSTRAP_AGENT_ID="ownagent-local-demo"
+export OWNAGENT_BOOTSTRAP_AGENT_API_KEY="oa_live_$(openssl rand -hex 32)"
+export OWNAGENT_TOOL_ADMIN_API_KEY="$(openssl rand -hex 32)"
 ```
 
-Keep the generated raw key in your secret manager or local environment. The backend stores only its SHA-256 hash. The bootstrap key is associated with the configured Agent and is rotated when you change the configured raw value and restart the backend. Do not commit it to source control.
+The local profile automatically creates the configured Agent if it is missing, so a clean local database can run the example without first opening an Agent-management screen. This behavior is explicitly disabled in the production profile; production must provision an Agent through its normal administrative process. The backend stores only the SHA-256 hash of the Agent key. Keep the raw keys in your local environment or secret manager and never commit them.
 
-Once provisioned, use the raw key as `OWNAGENT_AGENT_API_KEY` in the external Agent process. The same Agent key scopes trace ingestion and reads to that Agent.
+Use the raw bootstrap Agent key as `OWNAGENT_AGENT_API_KEY` in both the Agent and Worker processes. The Tool Admin key is separate and is required only when registering tool metadata.
 
 ## Install
 
