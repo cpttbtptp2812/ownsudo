@@ -1,6 +1,7 @@
 package com.ownsudo.security;
 
 import com.ownsudo.entity.AgentApiKeyEntity;
+import com.ownsudo.entity.AgentEntity;
 import com.ownsudo.repository.AgentApiKeyRepository;
 import com.ownsudo.repository.AgentRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,16 +22,19 @@ public class AgentApiKeyBootstrap implements CommandLineRunner {
     private final AgentRepository agentRepository;
     private final String agentId;
     private final String rawApiKey;
+    private final boolean createAgentIfMissing;
 
     public AgentApiKeyBootstrap(
             AgentApiKeyRepository keyRepository,
             AgentRepository agentRepository,
             @Value("${app.security.bootstrap-agent-id:}") String agentId,
-            @Value("${app.security.bootstrap-agent-api-key:}") String rawApiKey) {
+            @Value("${app.security.bootstrap-agent-api-key:}") String rawApiKey,
+            @Value("${ownagent.bootstrap.create-agent-if-missing:false}") boolean createAgentIfMissing) {
         this.keyRepository = keyRepository;
         this.agentRepository = agentRepository;
         this.agentId = agentId == null ? "" : agentId.trim();
         this.rawApiKey = rawApiKey == null ? "" : rawApiKey.trim();
+        this.createAgentIfMissing = createAgentIfMissing;
     }
 
     @Override
@@ -41,7 +45,18 @@ public class AgentApiKeyBootstrap implements CommandLineRunner {
             throw new IllegalStateException("Both OWNAGENT_BOOTSTRAP_AGENT_ID and OWNAGENT_BOOTSTRAP_AGENT_API_KEY must be configured");
         }
         if (!agentRepository.existsById(agentId)) {
-            throw new IllegalStateException("Configured bootstrap Agent does not exist: " + agentId);
+            if (!createAgentIfMissing) {
+                throw new IllegalStateException("Configured bootstrap Agent does not exist: " + agentId);
+            }
+            AgentEntity bootstrapAgent = new AgentEntity();
+            bootstrapAgent.setId(agentId);
+            bootstrapAgent.setName("OwnAgent Local Demo Agent");
+            bootstrapAgent.setDescription("Local development Agent identity used by the Python SDK Action Runtime example.");
+            bootstrapAgent.setModel("configured-model");
+            bootstrapAgent.setTemperature(0.2);
+            bootstrapAgent.setStatus("PUBLISHED");
+            bootstrapAgent.setSystemPrompt("You are a careful assistant. Use registered tools for real operations and report only their returned results.");
+            agentRepository.save(bootstrapAgent);
         }
 
         String hash = AgentApiKeyService.hashToken(rawApiKey);
