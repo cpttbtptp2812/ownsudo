@@ -176,23 +176,58 @@ public class AgentPlatformController {
     @GetMapping("/agents")
     public List<AgentEntity> getAgents() {
         List<AgentEntity> list = agentRepository.findAllByOrderByCreatedAtDesc();
-        int toolCount = (int) toolRepository.count();
+        int legacyToolCount = toolExecutor.getToolDefinitions().size();
         int kbCount = (int) knowledgeRepository.count();
-        for (AgentEntity a : list) {
-            if (a.getToolsCount() == null || a.getToolsCount() == 0) {
-                a.setToolsCount(toolCount);
+        for (AgentEntity agent : list) {
+            if (agent.getSelectedToolsJson() == null || agent.getSelectedToolsJson().isBlank()) {
+                agent.setToolsCount(legacyToolCount);
+            } else {
+                try {
+                    Set<?> selected = objectMapper.readValue(agent.getSelectedToolsJson(),
+                            objectMapper.getTypeFactory().constructCollectionType(Set.class, String.class));
+                    agent.setToolsCount(selected.size());
+                } catch (Exception ignored) {
+                    agent.setToolsCount(0);
+                }
             }
-            if (a.getKbCount() == null || a.getKbCount() == 0) {
-                a.setKbCount(kbCount);
-            }
+            if (agent.getKbCount() == null || agent.getKbCount() == 0) agent.setKbCount(kbCount);
         }
         return list;
+    }
+
+    @GetMapping("/agents/available-tools")
+    public List<Map<String, Object>> getAvailableAgentTools() {
+        return toolExecutor.getToolDefinitions().stream().map(definition -> {
+            Object function = definition.get("function");
+            if (!(function instanceof Map<?, ?> details)) return Map.<String, Object>of();
+            Object name = details.get("name");
+            Object description = details.get("description");
+            return Map.of("name", name == null ? "" : name.toString(),
+                    "description", description == null ? "" : description.toString());
+        }).filter(item -> !String.valueOf(item.get("name")).isBlank()).toList();
     }
 
     @PostMapping("/agents")
     public AgentEntity saveAgent(@RequestBody AgentEntity agent) {
         if (agent.getId() == null || agent.getId().trim().isEmpty()) {
             agent.setId("agent-" + UUID.randomUUID().toString().substring(0, 8));
+        }
+        if (agent.getSelectedToolsJson() != null && !agent.getSelectedToolsJson().isBlank()) {
+            try {
+                Set<String> selected = objectMapper.readValue(agent.getSelectedToolsJson(),
+                        objectMapper.getTypeFactory().constructCollectionType(LinkedHashSet.class, String.class));
+                Set<String> available = toolExecutor.getToolDefinitions().stream()
+                        .map(definition -> (Map<?, ?>) definition.get("function"))
+                        .filter(Objects::nonNull).map(details -> String.valueOf(details.get("name")))
+                        .collect(java.util.stream.Collectors.toSet());
+                if (!available.containsAll(selected)) throw new IllegalArgumentException("Agent contains unknown tool names");
+                agent.setSelectedToolsJson(objectMapper.writeValueAsString(selected));
+                agent.setToolsCount(selected.size());
+            } catch (IllegalArgumentException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IllegalArgumentException("selectedToolsJson must be a JSON string array", e);
+            }
         }
         return agentRepository.save(agent);
     }
@@ -269,6 +304,7 @@ public class AgentPlatformController {
         String dbModel = null;
         String dbSystemPrompt = null;
         Double dbTemperature = null;
+        Set<String> allowedToolNames = null;
         String agentName = "ownagent 调度中枢";
 
         if (agentId != null && !agentId.isBlank()) {
@@ -279,6 +315,15 @@ public class AgentPlatformController {
                 dbModel = a.getModel();
                 dbSystemPrompt = a.getSystemPrompt();
                 dbTemperature = a.getTemperature();
+                if (a.getSelectedToolsJson() != null && !a.getSelectedToolsJson().isBlank()) {
+                    try {
+                        allowedToolNames = objectMapper.readValue(a.getSelectedToolsJson(),
+                                objectMapper.getTypeFactory().constructCollectionType(LinkedHashSet.class, String.class));
+                    } catch (Exception invalidSelection) {
+                        log.warn("Agent {} has invalid selected tool configuration; disabling tools for this run", agentId, invalidSelection);
+                        allowedToolNames = Collections.emptySet();
+                    }
+                }
             }
         }
 
@@ -840,7 +885,7 @@ public class AgentPlatformController {
                 }
 
                 int currentDepth = 1;
-                List<Map<String, Object>> toolDefs = toolExecutor.getToolDefinitions();
+                List<Map<String, Object>> toolDefs = toolExecutor.getToolDefinitions(allowedToolNames);
                 int totalToolsExecuted = 0;
                 boolean hasPendingApproval = false;
                 Map<String, Object> pendingApprovalData = null;
