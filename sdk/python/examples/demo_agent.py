@@ -340,23 +340,28 @@ def run_agent(
     raise error
 
 
+DEFAULT_TASK = (
+    "Explain how OwnAgent's Action Runtime, Local Worker, approval, and UNKNOWN "
+    "state work together. Search the workspace first and cite the note IDs."
+)
+
+
+def parse_task(argv: list[str] | None = None) -> str:
+    parser = argparse.ArgumentParser(description="Run a real model-driven Agent through OwnAgent.")
+    parser.add_argument("task", nargs="?", default=DEFAULT_TASK, help="The task to give the model-driven Agent.")
+    task = parser.parse_args(argv).task.strip()
+    if not task:
+        parser.error("task must not be empty")
+    return task
+
+
 def main() -> None:
+    task = parse_task()
     base_url = os.environ["OWNAGENT_BASE_URL"]
     agent_key = os.environ["OWNAGENT_AGENT_API_KEY"]
     admin_key = os.environ["OWNAGENT_TOOL_ADMIN_API_KEY"]
     openai_key = os.environ["OPENAI_API_KEY"]
     openai_base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    parser = argparse.ArgumentParser(description="Run a real model-driven Agent through OwnAgent.")
-    parser.add_argument(
-        "task",
-        nargs="?",
-        default="Explain how OwnAgent's Action Runtime, Local Worker, approval, and UNKNOWN state work together. Search the workspace first and cite the note IDs.",
-        help="The task to give the model-driven Agent.",
-    )
-    args = parser.parse_args()
-    task = args.task.strip()
-    if not task:
-        parser.error("task must not be empty")
     run_id = uuid.uuid4().hex
 
     stop_worker = threading.Event()
