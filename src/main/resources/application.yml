@@ -22,6 +22,8 @@ logging:
     org.hibernate.SQL: WARN
 
 ownagent:
+  trace:
+    capture-content: ${OWNAGENT_TRACE_CAPTURE_CONTENT:false}
   runtime:
     lease-seconds: ${OWNAGENT_ACTION_LEASE_SECONDS:300}
     heartbeat-interval-ms: ${OWNAGENT_ACTION_HEARTBEAT_INTERVAL_MS:10000}

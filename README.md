@@ -84,24 +84,51 @@ These handlers demonstrate policy-gated execution and persisted outcomes. Each R
 
 ## Python SDK and Local Worker
 
-An installable Python SDK is available under sdk/python. It supports Action creation, metadata registration, event retrieval, and a LocalWorker that executes explicitly registered Python callables on a developer-controlled machine.
+The fastest way to verify the core OwnAgent business flow is the model-driven example below. It runs a real OpenAI-compatible model call, turns the model's tool call into an OwnAgent Action, lets a Python Local Worker execute an explicitly registered function, returns the real result to the model, and records the model/Action spans for the Studio.
 
-Install from this repository:
+### Run the complete Agent → Action → Worker → answer flow
+
+**1. Start the backend.** The default local profile uses an embedded H2 database, so Java 21 and Maven are enough for a clean local start:
+
+~~~bash
+# Set these before starting Spring Boot.
+export OWNAGENT_BOOTSTRAP_AGENT_ID=ownagent-local-demo
+export OWNAGENT_BOOTSTRAP_AGENT_API_KEY="oa_live_$(openssl rand -hex 32)"
+export OWNAGENT_TOOL_ADMIN_API_KEY="$(openssl rand -hex 32)"
+
+mvn spring-boot:run
+~~~
+
+On the local profile only, OwnAgent creates the configured bootstrap Agent when it does not exist yet. The raw Agent key is stored only as a SHA-256 hash. The production profile does not create missing Agents.
+
+**2. In another terminal, install the SDK and run the model-driven Agent.** Use the same Agent and Tool Admin keys from the backend terminal:
 
 ~~~bash
 cd sdk/python
 python -m pip install -e .
+
+export OWNAGENT_BASE_URL=http://localhost:8080
+export OWNAGENT_AGENT_API_KEY="paste-the-OWNAGENT_BOOTSTRAP_AGENT_API_KEY-value"
+export OWNAGENT_TOOL_ADMIN_API_KEY="paste-the-OWNAGENT_TOOL_ADMIN_API_KEY-value"
+export OPENAI_API_KEY="your-model-provider-key"
+export OPENAI_MODEL="gpt-4.1-mini"
+# Optional for an OpenAI-compatible provider:
+# export OPENAI_BASE_URL="https://your-provider.example/v1"
+
+python examples/demo_agent.py
 ~~~
 
-Configure OWNAGENT_BASE_URL, OWNAGENT_AGENT_API_KEY, and OWNAGENT_TOOL_ADMIN_API_KEY, then run:
+The example registers a read-only workspace search tool, starts a Local Worker, asks the model to use the tool, submits the model's actual arguments as an Action, waits for the Worker result, and sends that result back to the model for its final answer. The Worker runs a Python function registered in the local process; it does not download or execute server-supplied code.
 
-~~~bash
-python examples/local_worker.py
-~~~
+**3. Observe the same execution.** Open Studio → 运行观测 → 外部 Agent Runs, enter `OWNAGENT_AGENT_API_KEY`, and load Runs. The demo prints its Run ID. The displayed model and Action spans use the same Run ID and contain provider-reported token usage, actual timing, tool name, Action outcome, and errors. Prompt/response bodies remain off by default.
 
-The Worker claims only ALLOW / READY or approved REQUIRE_APPROVAL / READY Actions for tool names registered in the local process. The Agent and Worker can run as separate processes. See the SDK documentation and examples/local_worker.py for the full workflow.
+The one-flow example is also covered by an automated SDK integration test that runs the real `LocalWorker` against a stateful HTTP Action Runtime test double and verifies that the Worker result is returned to the model.
 
-Important boundaries: this first Worker runs in the host process and is not a sandbox. It uses the Agent API key, processes one Action at a time per process, and does not automatically retry. Handler exceptions and ambiguous completion outcomes become UNKNOWN. Independent Worker enrollment credentials, OS-level sandboxing, and manual reconciliation remain future work. High-risk Actions now require a configured approver before a Worker can claim them.
+### Run the Worker separately
+
+`examples/local_worker.py` is available when you want the Agent and Worker in separate processes. It registers a local greeting handler and polls the Runtime for matching Actions. The Agent and Worker must use the same Agent API key; the developer Tool Admin key is needed only by the process that registers tool metadata.
+
+Important boundaries: the Worker runs on the developer-controlled host and is not a sandbox. It processes one Action at a time per process and never blindly retries. Handler exceptions or ambiguous completion outcomes become UNKNOWN; reconcile the external system before submitting a new Action. High-risk Actions require a separately configured approver.
 
 ## Action approval API
 
@@ -120,13 +147,13 @@ Approval preserves the original policy decision REQUIRE_APPROVAL. An approved Ac
 All /api/v1/** requests require an Agent API key:
 
 ~~~bash
-export OWNAGENT_AGENT_KEY="your-agent-api-key"
+export OWNAGENT_AGENT_API_KEY="your-agent-api-key"
 export OWNAGENT_BASE_URL="http://localhost:8080"
 
 # 1. Register the demo handler's public input contract.
 # Requires both Agent authentication and the separate developer Tool Admin key.
 curl -X POST "$OWNAGENT_BASE_URL/api/v1/tools" \
-  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY" \
+  -H "Authorization: Bearer $OWNAGENT_AGENT_API_KEY" \
   -H "X-OwnAgent-Tool-Admin-Key: $OWNAGENT_TOOL_ADMIN_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -144,7 +171,7 @@ curl -X POST "$OWNAGENT_BASE_URL/api/v1/tools" \
 
 # 2. Create an Action. The response is READY, not yet executed.
 curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions" \
-  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY" \
+  -H "Authorization: Bearer $OWNAGENT_AGENT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "toolName": "demo.echo",
@@ -154,11 +181,11 @@ curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions" \
 
 # 3. Execute the returned Action ID.
 curl -X POST "$OWNAGENT_BASE_URL/api/v1/actions/<ACTION_ID>/execute" \
-  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY"
+  -H "Authorization: Bearer $OWNAGENT_AGENT_API_KEY"
 
 # 4. Inspect its persisted lifecycle events.
 curl "$OWNAGENT_BASE_URL/api/v1/actions/<ACTION_ID>/events" \
-  -H "Authorization: Bearer $OWNAGENT_AGENT_KEY"
+  -H "Authorization: Bearer $OWNAGENT_AGENT_API_KEY"
 ~~~
 
 ## Local development
@@ -167,7 +194,8 @@ Requirements:
 
 - Java 21
 - Maven 3.9+
-- MySQL 8 (or a configured supported development database)
+- No database installation is required for local development; the local profile uses an embedded H2 file database
+- MySQL 8 is used by the production profile
 
 Configure the required environment variables before starting the service. Production configuration intentionally does not contain default database credentials.
 

@@ -1,3 +1,8 @@
+ownagent:
+  bootstrap:
+    # Local profile only: make the first Python Agent example runnable from an empty database.
+    create-agent-if-missing: true
+
 spring:
   datasource:
     url: jdbc:h2:file:./data/agent_db;DB_CLOSE_DELAY=-1;MODE=MySQL;NON_KEYWORDS=USER;DEFAULT_LOCK_TIMEOUT=5000

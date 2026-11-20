@@ -7,6 +7,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.util.Map;
 import org.mockito.ArgumentCaptor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -36,7 +37,14 @@ class ChatRunRecorderTest {
         recorder.clear();
 
         verify(jdbc).update(contains("INSERT INTO chat_agent_run\n"), any(Object[].class));
-        verify(jdbc, atLeast(4)).update(contains("INSERT INTO chat_agent_run_event"), any(Object[].class));
+        ArgumentCaptor<Object[]> eventArgs = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc, atLeast(4)).update(contains("INSERT INTO chat_agent_run_event"), eventArgs.capture());
+        assertFalse(eventArgs.getAllValues().stream()
+                .anyMatch(args -> String.valueOf(args[6]).contains("请检查最近一次执行")));
+        Object[] userMessageEvent = eventArgs.getAllValues().stream()
+                .filter(args -> "USER_MESSAGE".equals(args[3]))
+                .findFirst().orElseThrow();
+        assertEquals("{\"captured\":false}", userMessageEvent[6]);
         verify(jdbc, atLeast(2)).update(contains("INSERT INTO chat_agent_run_span"), any(Object[].class));
         ArgumentCaptor<Object[]> updateArgs = ArgumentCaptor.forClass(Object[].class);
         verify(jdbc).update(contains("SET status = ?"), updateArgs.capture());
