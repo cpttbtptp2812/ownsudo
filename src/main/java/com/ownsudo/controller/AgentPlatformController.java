@@ -197,14 +197,19 @@ public class AgentPlatformController {
 
     @GetMapping("/agents/available-tools")
     public List<Map<String, Object>> getAvailableAgentTools() {
-        return toolExecutor.getToolDefinitions().stream().map(definition -> {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map<String, Object> definition : toolExecutor.getToolDefinitions()) {
             Object function = definition.get("function");
-            if (!(function instanceof Map<?, ?> details)) return Map.<String, Object>of();
+            if (!(function instanceof Map<?, ?> details)) continue;
             Object name = details.get("name");
+            if (name == null || name.toString().isBlank()) continue;
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("name", name.toString());
             Object description = details.get("description");
-            return Map.of("name", name == null ? "" : name.toString(),
-                    "description", description == null ? "" : description.toString());
-        }).filter(item -> !String.valueOf(item.get("name")).isBlank()).toList();
+            item.put("description", description == null ? "" : description.toString());
+            result.add(item);
+        }
+        return result;
     }
 
     @PostMapping("/agents")
