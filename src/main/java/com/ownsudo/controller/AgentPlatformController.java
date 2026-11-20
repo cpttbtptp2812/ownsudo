@@ -309,7 +309,7 @@ public class AgentPlatformController {
         String dbModel = null;
         String dbSystemPrompt = null;
         Double dbTemperature = null;
-        Set<String> allowedToolNames = null;
+        AtomicReference<Set<String>> allowedToolNames = new AtomicReference<>(null);
         String agentName = "ownagent 调度中枢";
 
         if (agentId != null && !agentId.isBlank()) {
@@ -322,11 +322,11 @@ public class AgentPlatformController {
                 dbTemperature = a.getTemperature();
                 if (a.getSelectedToolsJson() != null && !a.getSelectedToolsJson().isBlank()) {
                     try {
-                        allowedToolNames = objectMapper.readValue(a.getSelectedToolsJson(),
-                                objectMapper.getTypeFactory().constructCollectionType(LinkedHashSet.class, String.class));
+                        allowedToolNames.set(objectMapper.readValue(a.getSelectedToolsJson(),
+                                objectMapper.getTypeFactory().constructCollectionType(LinkedHashSet.class, String.class)));
                     } catch (Exception invalidSelection) {
                         log.warn("Agent {} has invalid selected tool configuration; disabling tools for this run", agentId, invalidSelection);
-                        allowedToolNames = Collections.emptySet();
+                        allowedToolNames.set(Collections.emptySet());
                     }
                 }
             }
@@ -890,7 +890,7 @@ public class AgentPlatformController {
                 }
 
                 int currentDepth = 1;
-                List<Map<String, Object>> toolDefs = toolExecutor.getToolDefinitions(allowedToolNames);
+                List<Map<String, Object>> toolDefs = toolExecutor.getToolDefinitions(allowedToolNames.get());
                 int totalToolsExecuted = 0;
                 boolean hasPendingApproval = false;
                 Map<String, Object> pendingApprovalData = null;
@@ -1015,7 +1015,7 @@ public class AgentPlatformController {
                                     long toolStart = System.currentTimeMillis();
                                     ToolExecutor.ToolExecutionResult toolResult;
                                     try {
-                                        if (allowedToolNames != null && !allowedToolNames.contains(functionName)) {
+                                        if (allowedToolNames.get() != null && !allowedToolNames.get().contains(functionName)) {
                                             throw new SecurityException("该 Agent 未绑定工具：" + functionName);
                                         }
                                         toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
