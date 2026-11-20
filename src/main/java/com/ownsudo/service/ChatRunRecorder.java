@@ -160,7 +160,6 @@ public class ChatRunRecorder {
                 "usageSource", hasUsage ? "PROVIDER" : "MISSING",
                 "inputTokens", hasUsage ? ctx.inputTokens : -1,
                 "outputTokens", hasUsage ? ctx.outputTokens : -1));
-        active.remove();
     }
 
     public void fail(Throwable error) {
@@ -180,7 +179,6 @@ public class ChatRunRecorder {
         recordEvent("RUN_FAILED", "ERROR", Map.of(
                 "errorType", error == null ? "Unknown" : error.getClass().getSimpleName(),
                 "message", error == null ? "Unknown execution error" : safeError(error)));
-        active.remove();
     }
 
     private boolean isContentCaptureEnabled() {
