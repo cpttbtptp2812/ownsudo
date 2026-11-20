@@ -280,7 +280,7 @@ public class AgentPlatformController {
         tool.setEnabled(!Boolean.FALSE.equals(body.get("enabled")));
         tool.setParametersSchema(schemaText);
         tool.setRiskLevel(String.valueOf(body.getOrDefault("riskLevel", "LOW")));
-        tool.setIsSafe(!Boolean.TRUE.equals(body.get("isSafe")) ? true : Boolean.TRUE.equals(body.get("isSafe")));
+        tool.setIsSafe(body.containsKey("isSafe") ? Boolean.TRUE.equals(body.get("isSafe")) : true);
         Object timeout = body.get("timeoutMs");
         if (timeout instanceof Number number) tool.setTimeoutMs(Math.max(100, Math.min(120000, number.intValue())));
         return ResponseEntity.ok(toolRepository.save(tool));
