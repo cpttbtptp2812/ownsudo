@@ -143,7 +143,11 @@ public class AssetController {
 
     @DeleteMapping("/tools/{id}")
     public ResponseEntity<Map<String, Object>> deleteTool(@PathVariable String id) {
-        if (!toolRepository.existsById(id)) return ResponseEntity.notFound().build();
+        McpTool tool = toolRepository.findById(id).orElse(null);
+        if (tool == null) return ResponseEntity.notFound().build();
+        if ("builtin".equalsIgnoreCase(tool.getServerName())) {
+            return ResponseEntity.status(409).body(Map.of("error", "内置工具不能注销，请使用停用开关"));
+        }
         toolRepository.deleteById(id);
         return ResponseEntity.ok(Map.of("ok", true, "deletedId", id));
     }
