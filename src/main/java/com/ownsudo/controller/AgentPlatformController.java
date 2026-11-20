@@ -225,11 +225,16 @@ public class AgentPlatformController {
             try {
                 Set<String> selected = objectMapper.readValue(agent.getSelectedToolsJson(),
                         objectMapper.getTypeFactory().constructCollectionType(LinkedHashSet.class, String.class));
+                Set<String> disabled = toolRepository.findAll().stream()
+                        .filter(tool -> !Boolean.TRUE.equals(tool.getEnabled()))
+                        .map(McpTool::getFunctionName).filter(Objects::nonNull)
+                        .collect(java.util.stream.Collectors.toSet());
                 Set<String> available = toolExecutor.getToolDefinitions().stream()
                         .map(definition -> (Map<?, ?>) definition.get("function"))
                         .filter(Objects::nonNull).map(details -> String.valueOf(details.get("name")))
+                        .filter(name -> !disabled.contains(name))
                         .collect(java.util.stream.Collectors.toSet());
-                if (!available.containsAll(selected)) throw new IllegalArgumentException("Agent contains unknown tool names");
+                if (!available.containsAll(selected)) throw new IllegalArgumentException("Agent contains unknown or disabled tool names");
                 agent.setSelectedToolsJson(objectMapper.writeValueAsString(selected));
                 agent.setToolsCount(selected.size());
             } catch (IllegalArgumentException e) {
