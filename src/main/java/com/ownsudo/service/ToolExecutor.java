@@ -415,6 +415,10 @@ public class ToolExecutor {
     }
 
     public List<Map<String, Object>> getToolDefinitions() {
+        return getToolDefinitions(null);
+    }
+
+    public List<Map<String, Object>> getToolDefinitions(Set<String> allowedNames) {
         List<Map<String, Object>> list = new ArrayList<>();
 
         // 1. query_enterprise_db
@@ -532,6 +536,14 @@ public class ToolExecutor {
             )
         ));
 
+        if (allowedNames != null) {
+            list.removeIf(definition -> {
+                Object function = definition.get("function");
+                if (!(function instanceof Map<?, ?> details)) return true;
+                Object name = details.get("name");
+                return name == null || !allowedNames.contains(name.toString());
+            });
+        }
         return list;
     }
 
