@@ -189,9 +189,12 @@ export OPENAI_MODEL="..."
 # Optional for a compatible provider:
 export OPENAI_BASE_URL="https://api.openai.com/v1"
 python examples/demo_agent.py
+
+# Or pass a task directly; quote it so the shell treats it as one argument.
+python examples/demo_agent.py "Find the approval policy and explain how a rejected Action is handled."
 ```
 
-The example asks the model to research OwnAgent's execution semantics. The model chooses when to call `demo.search_workspace`; the example submits that call as an Action; the Local Worker executes the registered Python function; and the result is returned to the model for its final answer.
+The example asks the model to research OwnAgent's execution semantics by default. A positional task replaces that default, and a blank task is rejected before the Agent starts. The program prints the submitted task and its Run ID so you can find the corresponding execution in Studio. The model chooses when to call `demo.search_workspace`; the example submits that call as an Action; the Local Worker executes the registered Python function; and the result is returned to the model for its final answer.
 
 The Action lifecycle and tool metadata are persisted by OwnAgent. The model request goes directly from the example to the configured LLM endpoint; the example separately submits a span containing provider-reported token usage to OwnAgent. LLM and Action failures are recorded with `status="ERROR"` when their execution raises. Trace ingestion is best-effort: a telemetry outage is reported to stderr and does not replace the Agent's actual result.
 
