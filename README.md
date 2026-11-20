@@ -6,6 +6,33 @@ OwnAgent is an open-source engineering platform for the parts of Agent developme
 
 It is not another chat wrapper and does not aim to replace every Agent framework. OwnAgent provides a focused execution and engineering layer, with REST and an independently installable Python SDK for integrating externally built Agents.
 
+## Persisted Agent Run history
+
+The observability API now materializes a queryable Run index from accepted trace spans:
+
+- `GET /api/v1/runs` lists recent runs for the authenticated Agent.
+- `GET /api/v1/runs/{runId}` returns the Run summary, ordered spans, and persisted span lifecycle events.
+- `agent_run` stores the Run-level projection; `agent_run_event` stores append-only span lifecycle observations; `agent_trace_span` remains the detailed span source of truth.
+- Provider token totals are aggregated only from spans marked `PROVIDER`; estimated or missing usage is never represented as provider usage.
+
+Built-in chat executions now create their own persisted Run / Trace records as the stream progresses. `GET /api/chat/runs?sessionId=...` lists them, `GET /api/chat/runs/{runId}` returns ordered events and spans, and `POST /api/chat/runs/{runId}/judge` evaluates the stored evidence. Built-in runs remain separate from external Agent Runs when no real Agent identity is supplied; the chat SSE stream emits the Run and Trace IDs, and the Run Explorer refreshes active runs.
+
+See [docs/run-history.md](docs/run-history.md). The additive V7–V11 Flyway migrations create external Trace / Run history, persisted external Judge evaluations, Promptfoo report storage, and built-in chat Run / event / span / evaluation tables. They are applied by the production profile. No production database was modified as part of this change. See [docs/integrations.md](docs/integrations.md) for the upstream reuse register, OTLP/HTTP JSON and Protobuf ingestion, Promptfoo report import/history, current export hooks, license boundaries, and recommended DeepEval / MCP Inspector integrations.
+
+## OpenTelemetry and Promptfoo report APIs
+
+The authenticated OTLP receiver accepts both standard OTLP/HTTP JSON and Protobuf at `POST /api/v1/otlp/v1/traces`. Use the official OTLP HTTP JSON exporter or Protobuf exporter; both feed the same span normalization, Run projection, persistence and live-event path.
+
+Promptfoo remains an external CLI runner. OwnAgent does not execute arbitrary Promptfoo projects on the server. Instead, an Agent API key can import an exported JSON / JSONL report and retrieve its saved history:
+
+~~~http
+POST /api/v1/evaluations/promptfoo/import
+GET  /api/v1/evaluations/promptfoo
+GET  /api/v1/evaluations/promptfoo/{reportId}
+~~~
+
+Imports are scoped to the authenticated Agent, limited to 20 MB, and have internal reasoning/analysis fields and assistant analysis-channel messages removed before persistence. Include an optional `runId` in the import JSON body to link the report to an existing Run; the backend verifies that the Run belongs to the authenticated Agent. Reports can later be listed and reopened without repeating the import. Apply Flyway V10 and V11 when deploying this branch.
+
 ## What it does
 
 - **Run Actions:** submit tool operations through an Agent-scoped API and persist their lifecycle.

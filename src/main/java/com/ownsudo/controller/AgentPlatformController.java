@@ -9,6 +9,7 @@ import com.ownsudo.service.ToolExecutor;
 import com.ownsudo.service.AgentMemoryService;
 import com.ownsudo.service.ExactHashCacheService;
 import com.ownsudo.service.ModelGatewayService;
+import com.ownsudo.service.ChatRunRecorder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -79,6 +80,9 @@ public class AgentPlatformController {
 
     @Autowired
     private ModelGatewayService modelGatewayService;
+
+    @Autowired
+    private ChatRunRecorder chatRunRecorder;
 
     @Autowired(required = false)
     private com.ownsudo.repository.WorkflowDefinitionRepository workflowDefinitionRepository;
@@ -285,7 +289,7 @@ public class AgentPlatformController {
         // 1.5. 人机交互层 (UACOS) - 全自动意图识别与业务流动态分派 (Intent Router)
         com.ownsudo.entity.WorkflowDefinition matchedWorkflow = null;
         String matchedIntentReason = "通用意图直通模式";
-        double routerConfidence = 0.95;
+
         com.ownsudo.entity.GitRepositoryEntity boundRepo = null;
 
         String lowerText = messageText != null ? messageText.toLowerCase(Locale.ROOT) : "";
@@ -324,7 +328,7 @@ public class AgentPlatformController {
                     if (isGitOrCodeTask) {
                         hit = true;
                         matchedIntentReason = "核心业务实体命中 [Git 代码仓库与 Commit 审计特征]";
-                        routerConfidence = 0.992;
+
                     }
                 }
                 if (hit) {
@@ -404,7 +408,7 @@ public class AgentPlatformController {
 
         final com.ownsudo.entity.WorkflowDefinition finalMatchedWf = matchedWorkflow;
         final String finalMatchedReason = matchedIntentReason;
-        final double finalConfidence = routerConfidence;
+
         final com.ownsudo.entity.GitRepositoryEntity finalBoundRepo = boundRepo;
         final String activeAgentName = agentName;
         final String effectiveSystemPrompt = rawSystemPrompt;
@@ -474,6 +478,14 @@ public class AgentPlatformController {
                 userMsg.setTokens(0);
                 messageRepository.save(userMsg);
 
+                Map<String, Object> runIdentity = chatRunRecorder.start(
+                        sessionId, agentId, activeAgentName,
+                        rawModel != null ? rawModel : llmClientService.getConfig("LLM_MODEL", "configured-model"),
+                        llmClientService.getConfig("LLM_PROVIDER", "configured-provider"), messageText);
+                try {
+                    emitter.send(SseEmitter.event().name("run").data(objectMapper.writeValueAsString(runIdentity)));
+                } catch (Exception ignored) {}
+
                 final StringBuilder reasoningBuffer = new StringBuilder();
 
                 Boolean enableRag = (Boolean) req.getOrDefault("enableRAG", true);
@@ -531,16 +543,16 @@ public class AgentPlatformController {
                 }
 
                 Map<String, Object> routerDetails = new LinkedHashMap<>();
-                routerDetails.put("matchedWorkflowId", finalMatchedWf != null ? finalMatchedWf.getId() : "default-chat");
-                routerDetails.put("matchedWorkflowName", finalMatchedWf != null ? finalMatchedWf.getName() : "通用智能对话助理");
-                routerDetails.put("confidence", (int)(finalConfidence * 100) + "%");
+                routerDetails.put("matchedWorkflowId", finalMatchedWf != null ? finalMatchedWf.getId() : null);
+                routerDetails.put("matchedWorkflowName", finalMatchedWf != null ? finalMatchedWf.getName() : null);
+
                 routerDetails.put("matchedReason", finalMatchedReason);
                 routerDetails.put("autoDispatched", true);
                 routerDetails.put("intentLabel", intentLabel);
                 routerDetails.put("intentCategory", intentCategory);
                 routerDetails.put("extractedEntities", extractedEntitiesDesc);
                 routerDetails.put("slotTags", slotTags);
-                routerDetails.put("workflowCategory", finalMatchedWf != null ? (finalMatchedWf.getCategory() != null ? finalMatchedWf.getCategory() : "业务流中台") : "通用对话");
+                routerDetails.put("workflowCategory", finalMatchedWf != null ? finalMatchedWf.getCategory() : null);
                 routerDetails.put("mountedRepo", finalBoundRepo != null ? finalBoundRepo.getName() + " (" + finalBoundRepo.getBranch() + ")" : "无关联外部数据源");
 
                 sendTraceStep(emitter, isClientConnected, traceStepsMap, 2, "INTENT_ROUTER", "任务层 (Task Layer) · 意图智能研判与业务流装载", "DONE", routerDetails);
@@ -613,6 +625,7 @@ public class AgentPlatformController {
                     try {
                         asstMsg.setTraceStepsJson(objectMapper.writeValueAsString(traceStepsMap));
                         Map<String, Object> traceSummary = new LinkedHashMap<>();
+                        traceSummary.putAll(chatRunRecorder.currentIdentity());
                         traceSummary.put("cached", true);
                         traceSummary.put("totalMs", hitDurationMs);
                         traceSummary.put("tokens", 0);
@@ -635,6 +648,7 @@ public class AgentPlatformController {
                     auditLogRepository.save(audit);
 
                     // F. 完成事件下发，携带真实 Trace 数据
+                    chatRunRecorder.complete(0, 0, false, "COMPLETED");
                     Map<String, Object> traceMap = new LinkedHashMap<>();
                     traceMap.put("totalMs", hitDurationMs);
                     traceMap.put("ragMs", 0);
@@ -742,7 +756,7 @@ public class AgentPlatformController {
                     ragDetails.put("isRealVector", searchResult.isRealVector());
                     ragDetails.put("mode", searchResult.getMode());
                     Map<String, Object> hydrationDetails = new LinkedHashMap<>(ragDetails);
-                    hydrationDetails.put("injectedVariables", finalBoundRepo != null ? "repo_name=" + finalBoundRepo.getName() + ", branch=" + finalBoundRepo.getBranch() : "通用系统环境");
+                    if (finalBoundRepo != null) hydrationDetails.put("injectedVariables", "repo_name=" + finalBoundRepo.getName() + ", branch=" + finalBoundRepo.getBranch());
                     hydrationDetails.put("promptLength", currentPrompt != null ? currentPrompt.length() : 0);
                     hydrationDetails.put("ragCostMs", ragDurationMs);
                     hydrationDetails.put("activeSkills", finalEnabledSkills);
@@ -752,7 +766,7 @@ public class AgentPlatformController {
                     Map<String, Object> hydrationDetails = new LinkedHashMap<>();
                     hydrationDetails.put("injectedVariables", finalBoundRepo != null ? "repo_name=" + finalBoundRepo.getName() + ", branch=" + finalBoundRepo.getBranch() : "通用系统环境");
                     hydrationDetails.put("promptLength", currentPrompt != null ? currentPrompt.length() : 0);
-                    hydrationDetails.put("reason", "标准上下文注水，知识库直通模式");
+
                     hydrationDetails.put("activeSkills", finalEnabledSkills);
                     hydrationDetails.put("skillCount", finalEnabledSkills.size());
                     sendTraceStep(emitter, isClientConnected, traceStepsMap, 3, "CONTEXT_HYDRATION", "执行引擎层 (Engine Layer) · 参数动态注入与提示词工程", "DONE", hydrationDetails);
@@ -865,7 +879,11 @@ public class AgentPlatformController {
                         if (compResponse != null && compResponse.has("choices") && compResponse.get("choices").size() > 0) {
                             com.fasterxml.jackson.databind.JsonNode messageNode = compResponse.get("choices").get(0).path("message");
                             Map<String, Object> modelResponseDetail = new LinkedHashMap<>(modelRequestDetail);
-                            modelResponseDetail.put("model_response", boundedTraceValue(objectMapper.convertValue(messageNode, Object.class)));
+                            if (isExecutionContentCaptureEnabled()) {
+                                modelResponseDetail.put("model_response", boundedTraceValue(objectMapper.convertValue(messageNode, Object.class)));
+                            } else {
+                                modelResponseDetail.put("content_capture", "disabled");
+                            }
                             if (compResponse.has("usage")) modelResponseDetail.put("usage", objectMapper.convertValue(compResponse.get("usage"), Object.class));
                             if (compResponse.has("model")) modelResponseDetail.put("actual_model", compResponse.path("model").asText());
                             sendExecutionEvent(emitter, isClientConnected, traceStepsMap, modelStepId, 40 + currentDepth,
@@ -943,9 +961,19 @@ public class AgentPlatformController {
                                         } catch (IOException ignored) {}
                                     }
 
+                                    chatRunRecorder.recordToolStart(callId, functionName, parseJsonOrText(functionArgs) instanceof Map<?, ?> argsMap ? (Map<String, Object>) argsMap : Map.of("raw", functionArgs));
                                     long toolStart = System.currentTimeMillis();
-                                    ToolExecutor.ToolExecutionResult toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
+                                    ToolExecutor.ToolExecutionResult toolResult;
+                                    try {
+                                        toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
+                                    } catch (RuntimeException toolError) {
+                                        long failedDuration = System.currentTimeMillis() - toolStart;
+                                        chatRunRecorder.recordToolResult(callId, functionName, false, failedDuration, null,
+                                                toolError.getMessage() == null ? toolError.getClass().getSimpleName() : toolError.getMessage());
+                                        throw toolError;
+                                    }
                                     long toolDuration = System.currentTimeMillis() - toolStart;
+                                    chatRunRecorder.recordToolResult(callId, functionName, toolResult.isSuccess(), toolDuration, boundedTraceValue(toolResult.isSuccess() ? toolResult.getData() : null), toolResult.isSuccess() ? null : toolResult.getErrorMessage());
                                     String toolDurationStr = toolDuration + "ms";
 
                                     if (isClientConnected.get()) {
@@ -1102,25 +1130,16 @@ public class AgentPlatformController {
                 }
 
                 // 实时下发步骤 4: 认知推演回路 · 专家大脑推演与技能决策
-                sendTraceStep(emitter, isClientConnected, traceStepsMap, 4, "LLM_REASONING", "认知推演回路 · 专家大脑推演与技能决策", "DONE", Map.of(
-                    "totalToolsExecuted", totalToolsExecuted,
-                    "modelDecidedTools", totalToolsExecuted > 0 ? "已根据用户意图调度执行相关工具" : "纯文本语义直通推演",
-                    "hasThinking", Boolean.TRUE.equals(enableThinking)
+                sendTraceStep(emitter, isClientConnected, traceStepsMap, 4, "AGENT_EXECUTION_SUMMARY", "Agent 执行摘要", "DONE", Map.of(
+                    "totalToolsExecuted", totalToolsExecuted
                 ));
 
-                // 实时下发步骤 5: 技能层 (Skill Layer) · 沙箱受控执行与真实数据回填
+                // Emit a tool-execution event only when at least one tool actually ran.
                 if (totalToolsExecuted > 0) {
-                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 5, "SKILL_ACTION", "技能层 (Skill Layer) · 沙箱受控执行与真实数据回填", "DONE", Map.of(
-                        "totalToolsExecuted", totalToolsExecuted,
-                        "executionMode", "沙箱隔离受控执行",
-                        "approvalStatus", hasPendingApproval ? "触发安全熔断，等待审批" : "安全基线放行"
-                    ));
-                } else {
-                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 5, "SKILL_ACTION", "技能层 (Skill Layer) · 沙箱受控执行与真实数据回填", "PASSED", Map.of(
-                        "totalToolsExecuted", 0,
-                        "executionMode", "纯文本推导无需外部技能",
-                        "approvalStatus", "安全基线放行"
-                    ));
+                    Map<String, Object> toolSummary = new LinkedHashMap<>();
+                    toolSummary.put("totalToolsExecuted", totalToolsExecuted);
+                    if (hasPendingApproval) toolSummary.put("approvalStatus", "PENDING_APPROVAL");
+                    sendTraceStep(emitter, isClientConnected, traceStepsMap, 5, "SKILL_ACTION", "工具执行", "DONE", toolSummary);
                 }
 
                 if (isClientConnected.get()) {
@@ -1189,7 +1208,11 @@ public class AgentPlatformController {
                 long durationMs = System.currentTimeMillis() - startTime;
                 String durationStr = String.format(Locale.US, "%.2fs", durationMs / 1000.0);
                 Map<String, Object> finalResponseDetail = new LinkedHashMap<>(finalRequestDetail);
-                finalResponseDetail.put("model_response", boundedTraceValue(replyBuffer.toString()));
+                if (isExecutionContentCaptureEnabled()) {
+                    finalResponseDetail.put("model_response", boundedTraceValue(replyBuffer.toString()));
+                } else {
+                    finalResponseDetail.put("content_capture", "disabled");
+                }
                 finalResponseDetail.put("durationMs", durationMs);
                 if (hasRealUsageRef.get()) {
                     finalResponseDetail.put("usage", Map.of(
@@ -1203,6 +1226,7 @@ public class AgentPlatformController {
                 sendExecutionEvent(emitter, isClientConnected, traceStepsMap, finalModelStepId, 60,
                         "llm", "done", "最终回答生成", "模型流式回答已完成", finalResponseDetail);
                 activeModelStepId.compareAndSet(finalModelStepId, null);
+                chatRunRecorder.complete(promptTokensRef.get(), completionTokensRef.get(), hasRealUsageRef.get(), isClientConnected.get() ? "COMPLETED" : "ABORTED");
 
                 // 7. 解决引用保存 Bug：setCitationsJson 必须在 save 之前赋值，确保持久化
                 ChatMessageEntity asstMsg = new ChatMessageEntity();
@@ -1227,6 +1251,7 @@ public class AgentPlatformController {
                         asstMsg.setApprovalTicketJson(objectMapper.writeValueAsString(approvalTicketRef.get()));
                     }
                     Map<String, Object> traceSummary = new LinkedHashMap<>();
+                    traceSummary.putAll(chatRunRecorder.currentIdentity());
                     traceSummary.put("cached", false);
                     traceSummary.put("totalMs", durationMs);
                     traceSummary.put("tokens", asstMsg.getTokens());
@@ -1329,6 +1354,7 @@ public class AgentPlatformController {
                 }
 
             } catch (Exception e) {
+                chatRunRecorder.fail(e);
                 String activeStepId = activeModelStepId.getAndSet(null);
                 if (activeStepId != null) {
                     Map<String, Object> failedDetail = new LinkedHashMap<>();
@@ -1345,6 +1371,8 @@ public class AgentPlatformController {
                     } catch (IOException ignored) {}
                     emitter.complete();
                 }
+            } finally {
+                chatRunRecorder.clear();
             }
         });
 
@@ -1601,6 +1629,7 @@ public class AgentPlatformController {
         payload.put("rightDetail", details);
         payload.put("timestamp", System.currentTimeMillis());
         if (traceStepsMap != null) traceStepsMap.put(seq, payload);
+        chatRunRecorder.recordStep(stepId, seq, phase, status, title, subtitle, details);
         try {
             String json = objectMapper.writeValueAsString(payload);
             emitter.send(SseEmitter.event().name("agent_step").data(json));
@@ -1609,92 +1638,58 @@ public class AgentPlatformController {
     }
 
     /**
-     * 向客户端逐帧下发真实全链路执行轨迹 (Trace Step & Agent Step)
-     * 服务端单源驱动：同时下发兼顾旧版的 trace_step 与现代化全能 agent_step 事件
+     * Emit a compact event marker for an operation performed by the backend.
+     * Event codes and attached details are the evidence. The UI must not turn
+     * these markers into invented reasoning stages, confidence scores, or sandbox claims.
      */
-    private void sendTraceStep(SseEmitter emitter, AtomicBoolean isConnected, Map<Integer, Object> traceStepsMap, int step, String name, String title, String status, Map<String, Object> details) {
+    private void sendTraceStep(SseEmitter emitter, AtomicBoolean isConnected,
+                               Map<Integer, Object> traceStepsMap, int step,
+                               String name, String title, String status,
+                               Map<String, Object> details) {
+        String eventName = name == null || name.isBlank() ? "UNKNOWN_EVENT" : name;
+        String phase = switch (eventName) {
+            case "CLIENT_REQUEST" -> "intent";
+            case "INTENT_ROUTER" -> "workflow";
+            case "FINOPS_CACHE", "HYBRID_RAG", "CONTEXT_HYDRATION" -> "context";
+            case "LLM_REASONING", "LLM_RESPONSE" -> "llm";
+            case "AGENT_EXECUTION_SUMMARY" -> "workflow";
+            case "SKILL_ACTION" -> "skill";
+            case "STREAM_DELIVERY" -> "delivery";
+            default -> "external";
+        };
+        String label = switch (eventName) {
+            case "CLIENT_REQUEST" -> "用户请求";
+            case "INTENT_ROUTER" -> "任务路由";
+            case "FINOPS_CACHE" -> "缓存检查";
+            case "HYBRID_RAG" -> "知识检索";
+            case "CONTEXT_HYDRATION" -> "上下文准备";
+            case "LLM_REASONING" -> "模型调用";
+            case "LLM_RESPONSE" -> "模型响应";
+            case "AGENT_EXECUTION_SUMMARY" -> "Agent 执行摘要";
+            case "SKILL_ACTION" -> "工具执行";
+            case "STREAM_DELIVERY" -> "响应输出";
+            case "SAFETY_BASELINE" -> "安全策略";
+            default -> eventName;
+        };
+
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("seq", step);
         payload.put("step", step);
-        payload.put("name", name);
-        payload.put("stepId", "step-" + step + "-" + (name != null ? name.toLowerCase(Locale.ROOT).replace('_', '-') : "node"));
-        payload.put("title", title);
-        payload.put("status", status != null ? status : "DONE");
+        payload.put("name", eventName);
+        payload.put("stepId", "step-" + step + "-" + eventName.toLowerCase(Locale.ROOT).replace('_', '-'));
+        payload.put("title", label);
+        payload.put("status", status == null ? "UNKNOWN" : status);
         payload.put("timestamp", System.currentTimeMillis());
-
-        // 根据步骤序号映射标准 UACOS 阶段与左右两端专属文本
-        String phase;
-        String leftTitle;
-        String leftSummary;
-        String rightTitle;
-        String rightSubtitle;
-
-        switch (step) {
-            case 1:
-                phase = "intent";
-                leftTitle = "业务意图感知";
-                leftSummary = "捕获自然语言指令，解析关键操作实体与上下文环境";
-                rightTitle = "01. 自然语言意图解析与实体提取";
-                rightSubtitle = "UACOS 人机交互层 · 上下文参数结构化装配";
-                break;
-            case 2:
-                phase = "workflow";
-                leftTitle = "动态编排任务流";
-                String wfName = details != null && details.containsKey("matchedWorkflowName") ? String.valueOf(details.get("matchedWorkflowName")) : "业务流自适应中枢";
-                leftSummary = "命中业务流《" + wfName + "》，构建动态执行拓扑";
-                rightTitle = "02. 任务层动态编排与路由";
-                rightSubtitle = "UACOS 任务层 · 规则引擎自动匹配与调度";
-                break;
-            case 3:
-                phase = "context";
-                leftTitle = "专项准则与知识工程";
-                int skCount = details != null && details.containsKey("skillCount") ? Integer.parseInt(String.valueOf(details.get("skillCount"))) : 0;
-                leftSummary = skCount > 0 
-                    ? "装配工程上下文，已激活 " + skCount + " 项专项排查准则与规程基线" 
-                    : (details != null && Boolean.TRUE.equals(details.get("isRealVector")) ? "多路召回企业知识库切片，注入规程防线" : "装配标准上下文工程与动态变量注入");
-                rightTitle = "03. 提示词工程与专项技能注入";
-                rightSubtitle = skCount > 0 
-                    ? "UACOS 规则引擎 · 动态注入 " + skCount + " 项排查准则与规程基线" 
-                    : "UACOS 上下文工程 · 变量注水 {{repo_name}} / 规程基线";
-                break;
-            case 4:
-                phase = "llm";
-                leftTitle = "大模型认知推演回路";
-                leftSummary = "基座模型深度推演，研判业务逻辑并决定技能调度链路";
-                rightTitle = "04. 专家大脑认知推演回路";
-                rightSubtitle = "UACOS 执行引擎层 · 专家模型多维度推导";
-                break;
-            case 5:
-                phase = "skill";
-                leftTitle = "底层技能受控执行";
-                int toolsCount = details != null && details.containsKey("totalToolsExecuted") ? Integer.parseInt(String.valueOf(details.get("totalToolsExecuted"))) : 0;
-                leftSummary = toolsCount > 0 ? "沙箱环境安全执行外部业务技能，完成数据回填" : "沙箱安全规则校验通过，无外部高危操作";
-                rightTitle = "05. 技能层安全沙箱执行 (Skill Layer)";
-                rightSubtitle = "UACOS 技能层 · GitService / API / 沙箱受控执行";
-                break;
-            case 6:
-            default:
-                phase = "delivery";
-                leftTitle = "全链路交付与闭环";
-                leftSummary = "业务审计报告生成完毕 · 0 异常 · 算力闭环";
-                rightTitle = "06. 结果流式组装与安全交付";
-                rightSubtitle = "UACOS 交付闭环 · 流式排版与审计对账完成";
-                break;
-        }
-
         payload.put("phase", phase);
-        payload.put("leftTitle", leftTitle);
-        payload.put("leftSummary", leftSummary);
-        payload.put("rightTitle", rightTitle);
-        payload.put("rightSubtitle", rightSubtitle);
+        payload.put("leftTitle", label);
+        payload.put("leftSummary", "");
+        payload.put("rightTitle", label);
+        payload.put("rightSubtitle", "");
         payload.put("rightDetail", details != null ? details : Collections.emptyMap());
+        if (details != null) payload.putAll(details);
 
-        if (details != null) {
-            payload.putAll(details);
-        }
-        if (traceStepsMap != null) {
-            traceStepsMap.put(step, payload);
-        }
+        if (traceStepsMap != null) traceStepsMap.put(step, payload);
+        chatRunRecorder.recordStep("step-" + step + "-" + eventName.toLowerCase(Locale.ROOT).replace('_', '-'), step, phase, status, label, "", details);
         if (isConnected != null && !isConnected.get()) return;
         try {
             String json = objectMapper.writeValueAsString(payload);

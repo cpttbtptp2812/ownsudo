@@ -277,6 +277,25 @@ class OwnAgentClient:
 
 
 
+    def agent_run(
+        self,
+        name: str,
+        *,
+        session_id: str | None = None,
+        attributes: dict[str, Any] | None = None,
+        best_effort: bool = True,
+    ):
+        """Start a complete Agent run; nested run.span() calls share its identity."""
+        from .trace import AgentRun
+
+        return AgentRun(
+            self,
+            name,
+            session_id=session_id,
+            attributes=attributes,
+            best_effort=best_effort,
+        )
+
     def trace_span(
         self,
         trace_id: str,

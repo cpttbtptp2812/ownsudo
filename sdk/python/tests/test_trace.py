@@ -72,3 +72,28 @@ def test_trace_context_best_effort_does_not_replace_agent_result() -> None:
         assert answer == "Agent result remains available"
     finally:
         client.close()
+
+
+def test_agent_run_propagates_run_and_session_identity_to_nested_spans() -> None:
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(202, json={"accepted": True})
+
+    with OwnAgentClient("http://localhost:8080", "test-key",  # noqa: SIM117
+                        transport=httpx.MockTransport(handler)) as client:
+        with client.agent_run("customer-support", session_id="session-42") as run:
+            with run.span("llm.chat.completions", span_kind="CLIENT") as llm:
+                llm.set_usage(input_tokens=21, output_tokens=8)
+            with run.span("tool.lookup_order") as tool:
+                tool.attributes["tool_name"] = "lookup_order"
+
+    assert len(requests) == 6
+    assert requests[0]["runId"] == run.run_id
+    assert requests[1]["runId"] == run.run_id
+    assert requests[1]["parentSpanId"] == requests[0]["spanId"]
+    assert requests[3]["runId"] == run.run_id
+    assert requests[3]["parentSpanId"] == requests[0]["spanId"]
+    assert requests[-1]["runId"] == run.run_id
+    assert requests[0]["attributes"]["session.id"] == "session-42"

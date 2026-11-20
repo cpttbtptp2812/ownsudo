@@ -10,7 +10,9 @@ from uuid import uuid4
 from .client import OwnAgentClient
 
 logger = logging.getLogger(__name__)
-_active_span: ContextVar[tuple[str, str, int] | None] = ContextVar("ownagent_active_span", default=None)
+_active_span: ContextVar[tuple[str, str, int, str | None] | None] = ContextVar(
+    "ownagent_active_span", default=None
+)
 
 
 def _timestamp() -> str:
@@ -44,9 +46,10 @@ class TraceSpan:
             raise ValueError("name must not be empty")
         self.client = client
         self.trace_id = trace_id
-        self.run_id = run_id
-        self.span_id = span_id or uuid4().hex
         active = _active_span.get()
+        inherited_run_id = active[3] if active and active[0] == trace_id and active[2] == id(client) else None
+        self.run_id = run_id or inherited_run_id
+        self.span_id = span_id or uuid4().hex
         self.parent_span_id = parent_span_id or (
             active[1] if active and active[0] == trace_id and active[2] == id(client) else None
         )
@@ -59,7 +62,7 @@ class TraceSpan:
         self.output_tokens: int | None = None
         self.total_tokens: int | None = None
         self.usage_source = "MISSING"
-        self._context_token: Token[tuple[str, str, int] | None] | None = None
+        self._context_token: Token[tuple[str, str, int, str | None] | None] | None = None
 
     def set_usage(
         self,
@@ -114,7 +117,7 @@ class TraceSpan:
             logger.warning("OwnAgent trace span delivery failed for %s", self.name, exc_info=True)
 
     def __enter__(self) -> TraceSpan:
-        self._context_token = _active_span.set((self.trace_id, self.span_id, id(self.client)))
+        self._context_token = _active_span.set((self.trace_id, self.span_id, id(self.client), self.run_id))
         try:
             self._send("UNSET")
         except Exception:
@@ -137,3 +140,68 @@ class TraceSpan:
             if self._context_token is not None:
                 _active_span.reset(self._context_token)
         return False
+
+
+class AgentRun:
+    """A complete Agent execution with a generated trace/run identity.
+
+    Nested spans created through run.span() inherit the same run_id and parent
+    span context. Session identity is stored as an explicit span attribute.
+    """
+
+    def __init__(
+        self,
+        client: OwnAgentClient,
+        name: str,
+        *,
+        session_id: str | None = None,
+        attributes: dict[str, Any] | None = None,
+        best_effort: bool = True,
+    ) -> None:
+        if not name.strip():
+            raise ValueError("name must not be empty")
+        self.client = client
+        self.trace_id = uuid4().hex
+        self.run_id = uuid4().hex
+        root_attributes = dict(attributes or {})
+        if session_id:
+            root_attributes.setdefault("session.id", session_id)
+        root_attributes.setdefault("ownagent.run.id", self.run_id)
+        self._root = TraceSpan(
+            client,
+            self.trace_id,
+            name,
+            run_id=self.run_id,
+            attributes=root_attributes,
+            best_effort=best_effort,
+        )
+
+    def __enter__(self) -> AgentRun:
+        self._root.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> bool:
+        return self._root.__exit__(exc_type, exc, traceback)
+
+    def span(
+        self,
+        name: str,
+        *,
+        span_kind: str = "INTERNAL",
+        attributes: dict[str, Any] | None = None,
+        best_effort: bool = True,
+    ) -> TraceSpan:
+        """Create a child span associated with this run."""
+        return self.client.trace_span(
+            self.trace_id,
+            name,
+            run_id=self.run_id,
+            span_kind=span_kind,
+            attributes=attributes,
+            best_effort=best_effort,
+        )

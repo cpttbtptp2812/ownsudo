@@ -343,7 +343,8 @@ public class LlmClientService {
         String baseUrl = configuredBaseUrl.endsWith("/") ? configuredBaseUrl : configuredBaseUrl + "/";
         String endpoint = baseUrl + "chat/completions";
         String system = "You are an objective AI Agent evaluator. Evaluate only the supplied task, answer and execution evidence. "
-                + "Return one valid JSON object with an overall score and concise dimension scores. Do not invent evidence. "
+                + "Return one valid JSON object with an overall score, concise dimension scores, a brief summary and evidence-backed issues. Do not invent evidence. "
+                + "Do not return chain-of-thought, private analysis, or hidden reasoning. "
                 + "Apply this rubric: " + safe(rubric);
         String user = "TASK:\\n" + safe(task)
                 + "\\n\\nFINAL ANSWER:\\n" + safe(answer)

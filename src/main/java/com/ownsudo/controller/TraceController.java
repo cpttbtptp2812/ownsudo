@@ -7,6 +7,8 @@ import com.ownsudo.security.AgentApiKeyFilter;
 import com.ownsudo.service.TraceEventStreamService;
 import com.ownsudo.service.TraceSpanService;
 import com.ownsudo.service.LlmClientService;
+import com.ownsudo.service.AgentRunPersistenceService;
+import com.ownsudo.service.AgentRunEvaluationService;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -22,12 +24,16 @@ public class TraceController {
     private final TraceEventStreamService eventStream;
     private final ObjectMapper mapper;
     private final LlmClientService llmClientService;
+    private final AgentRunPersistenceService runHistory;
+    private final AgentRunEvaluationService evaluations;
 
-    public TraceController(TraceSpanService service, TraceEventStreamService eventStream, ObjectMapper mapper, LlmClientService llmClientService) {
+    public TraceController(TraceSpanService service, TraceEventStreamService eventStream, ObjectMapper mapper, LlmClientService llmClientService, AgentRunPersistenceService runHistory, AgentRunEvaluationService evaluations) {
         this.service = service;
         this.eventStream = eventStream;
         this.mapper = mapper;
         this.llmClientService = llmClientService;
+        this.runHistory = runHistory;
+        this.evaluations = evaluations;
     }
 
     @PostMapping("/spans")
@@ -35,7 +41,9 @@ public class TraceController {
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
             @RequestBody(required = false) IngestTraceSpanRequest request) {
         try {
-            TraceSpanResponse span = TraceSpanResponse.from(service.ingest(agentId, request), mapper);
+            var persisted = service.ingest(agentId, request);
+            runHistory.recordSpan(agentId, persisted);
+            TraceSpanResponse span = TraceSpanResponse.from(persisted, mapper);
             // Publish only after TraceSpanService's transactional call has returned successfully.
             eventStream.publish(agentId, span);
             return ResponseEntity.status(202).body(span);
@@ -69,15 +77,21 @@ public class TraceController {
         try {
             List<TraceSpanResponse> spans = service.list(agentId, traceId).stream()
                     .map(span -> TraceSpanResponse.from(span, mapper)).toList();
+            if (spans.isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
             String task = String.valueOf(request == null ? "" : request.getOrDefault("task", ""));
             String answer = String.valueOf(request == null ? "" : request.getOrDefault("answer", ""));
             String rubric = String.valueOf(request == null ? "" : request.getOrDefault("rubric", "任务完成度、指令遵循、回答正确性、工具使用合理性"));
             String evidence = mapper.writeValueAsString(spans);
             var result = llmClientService.judgeAgentRun(task, answer, evidence, rubric);
+            String judgeModel = llmClientService.getConfig("EVAL_JUDGE_MODEL", llmClientService.getConfig("LLM_MODEL", "configured-model"));
+            var evaluation = evaluations.save(agentId, traceId, judgeModel, rubric, result);
             return ResponseEntity.ok(Map.of(
                     "traceId", traceId,
-                    "judgeModel", llmClientService.getConfig("EVAL_JUDGE_MODEL", llmClientService.getConfig("LLM_MODEL", "configured-model")),
-                    "scores", result
+                    "judgeModel", judgeModel,
+                    "scores", evaluation.get("scores"),
+                    "evaluation", evaluation
             ));
         } catch (Exception e) {
             return ResponseEntity.status(502).body(Map.of(
@@ -85,6 +99,13 @@ public class TraceController {
             ));
         }
     }
+    @GetMapping("/{traceId}/evaluations")
+    public ResponseEntity<?> evaluationHistory(
+            @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
+            @PathVariable String traceId) {
+        return ResponseEntity.ok(evaluations.history(agentId, traceId));
+    }
+
     @GetMapping(path = "/{traceId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<?> events(
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,

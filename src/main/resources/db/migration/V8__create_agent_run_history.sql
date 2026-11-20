@@ -1,0 +1,46 @@
+CREATE TABLE agent_run (
+    id VARCHAR(64) NOT NULL,
+    agent_id VARCHAR(64) NOT NULL,
+    run_id VARCHAR(64) NOT NULL,
+    trace_id VARCHAR(64) NOT NULL,
+    session_id VARCHAR(128) NULL,
+    conversation_id VARCHAR(128) NULL,
+    name VARCHAR(200) NOT NULL DEFAULT 'Agent run',
+    status VARCHAR(24) NOT NULL DEFAULT 'RUNNING',
+    started_at DATETIME(6) NOT NULL,
+    ended_at DATETIME(6) NULL,
+    duration_ms BIGINT NULL,
+    span_count INT NOT NULL DEFAULT 0,
+    error_count INT NOT NULL DEFAULT 0,
+    input_tokens BIGINT NULL,
+    output_tokens BIGINT NULL,
+    total_tokens BIGINT NULL,
+    usage_source VARCHAR(24) NOT NULL DEFAULT 'MISSING',
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_agent_run_identity (agent_id, run_id),
+    INDEX idx_agent_run_recent (agent_id, started_at),
+    INDEX idx_agent_run_trace (agent_id, trace_id),
+    INDEX idx_agent_run_session (agent_id, session_id),
+    CONSTRAINT fk_agent_run_agent FOREIGN KEY (agent_id) REFERENCES agent_definition(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE agent_run_event (
+    id VARCHAR(64) NOT NULL,
+    agent_id VARCHAR(64) NOT NULL,
+    run_id VARCHAR(64) NOT NULL,
+    trace_id VARCHAR(64) NOT NULL,
+    span_id VARCHAR(64) NULL,
+    event_type VARCHAR(48) NOT NULL,
+    status VARCHAR(24) NOT NULL,
+    event_time DATETIME(6) NOT NULL,
+    payload_json LONGTEXT NULL,
+    created_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_run_event_timeline (agent_id, run_id, event_time),
+    INDEX idx_run_event_trace (agent_id, trace_id, event_time),
+    CONSTRAINT fk_run_event_identity FOREIGN KEY (agent_id, run_id)
+        REFERENCES agent_run(agent_id, run_id) ON DELETE CASCADE,
+    CONSTRAINT fk_run_event_agent FOREIGN KEY (agent_id) REFERENCES agent_definition(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

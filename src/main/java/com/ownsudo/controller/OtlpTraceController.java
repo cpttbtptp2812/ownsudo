@@ -3,12 +3,16 @@ package com.ownsudo.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.util.JsonFormat;
+import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
 import com.ownsudo.dto.IngestTraceSpanRequest;
 import com.ownsudo.dto.TraceSpanResponse;
 import com.ownsudo.security.AgentApiKeyFilter;
 import com.ownsudo.service.TraceEventStreamService;
 import com.ownsudo.service.TraceSpanService;
 import com.ownsudo.service.TraceExportService;
+import com.ownsudo.service.AgentRunPersistenceService;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,6 +21,8 @@ import java.math.BigInteger;
 import java.time.Instant;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Base64;
+import java.util.HexFormat;
 
 /**
  * OTLP/HTTP JSON receiver. It accepts standard OpenTelemetry ExportTraceServiceRequest
@@ -30,19 +36,89 @@ public class OtlpTraceController {
     private final TraceEventStreamService stream;
     private final TraceExportService exporter;
     private final ObjectMapper mapper;
+    private final AgentRunPersistenceService runHistory;
 
     public OtlpTraceController(TraceSpanService spans, TraceEventStreamService stream,
-                               TraceExportService exporter, ObjectMapper mapper) {
+                               TraceExportService exporter, ObjectMapper mapper, AgentRunPersistenceService runHistory) {
         this.spans = spans;
         this.stream = stream;
         this.exporter = exporter;
         this.mapper = mapper;
+        this.runHistory = runHistory;
     }
 
     @PostMapping(path = "/v1/traces", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> ingest(
             @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
             @RequestBody(required = false) JsonNode request) {
+        return ingestPayload(agentId, request);
+    }
+
+    /**
+     * OTLP/HTTP protobuf is the default transport for many OpenTelemetry SDKs.
+     * Convert the generated wire message through the official protobuf JSON mapping,
+     * then reuse the exact same validation, normalization and persistence path as JSON.
+     */
+    @PostMapping(path = "/v1/traces", consumes = "application/x-protobuf")
+    public ResponseEntity<?> ingestProtobuf(
+            @RequestAttribute(AgentApiKeyFilter.AGENT_ID_ATTRIBUTE) String agentId,
+            @RequestBody(required = false) byte[] payload) {
+        if (payload == null || payload.length == 0) {
+            return ResponseEntity.badRequest().body(Map.of("error", Map.of(
+                    "code", "INVALID_OTLP_REQUEST", "message", "Protobuf request body is empty")));
+        }
+        try {
+            ExportTraceServiceRequest message = ExportTraceServiceRequest.parseFrom(payload);
+            JsonNode request = mapper.readTree(JsonFormat.printer().print(message));
+            normalizeProtobufSpanIds(request);
+            return ingestPayload(agentId, request);
+        } catch (InvalidProtocolBufferException error) {
+            return ResponseEntity.badRequest().body(Map.of("error", Map.of(
+                    "code", "INVALID_OTLP_PROTOBUF", "message", "Could not decode OTLP ExportTraceServiceRequest")));
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(Map.of("error", Map.of(
+                    "code", "INVALID_OTLP_REQUEST", "message", error.getMessage() == null ? "Could not decode OTLP request" : error.getMessage())));
+        }
+    }
+
+    /**
+     * Protobuf JSON mapping encodes bytes fields as Base64, while OTLP/HTTP JSON
+     * represents trace/span identifiers as lowercase hex strings. Convert the
+     * three identifier fields before handing the payload to the shared JSON path.
+     */
+    private void normalizeProtobufSpanIds(JsonNode request) {
+        JsonNode resourceSpansList = request.path("resourceSpans");
+        if (!resourceSpansList.isArray()) return;
+        for (JsonNode resourceSpans : resourceSpansList) {
+            JsonNode scopes = resourceSpans.path("scopeSpans").isArray()
+                    ? resourceSpans.path("scopeSpans") : resourceSpans.path("instrumentationLibrarySpans");
+            if (!scopes.isArray()) continue;
+            for (JsonNode scope : scopes) {
+                JsonNode spanList = scope.path("spans");
+                if (!spanList.isArray()) continue;
+                for (JsonNode rawSpan : spanList) {
+                    if (!(rawSpan instanceof ObjectNode span)) continue;
+                    for (String field : new String[]{"traceId", "spanId", "parentSpanId"}) {
+                        JsonNode value = span.get(field);
+                        if (value == null || !value.isTextual()) continue;
+                        String encoded = value.asText();
+                        int expectedHexLength = "traceId".equals(field) ? 32 : 16;
+                        if (encoded.matches("(?i)[0-9a-f]{" + expectedHexLength + "}")) continue;
+                        try {
+                            byte[] decoded = Base64.getDecoder().decode(encoded);
+                            if (decoded.length * 2 == expectedHexLength) {
+                                span.put(field, HexFormat.of().formatHex(decoded));
+                            }
+                        } catch (IllegalArgumentException ignored) {
+                            // Leave malformed values intact so normal span validation rejects them.
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private ResponseEntity<?> ingestPayload(String agentId, JsonNode request) {
         if (request == null || !request.isObject() || !request.path("resourceSpans").isArray()) {
             return ResponseEntity.badRequest().body(Map.of("error", Map.of(
                     "code", "INVALID_OTLP_REQUEST", "message", "Expected OTLP ExportTraceServiceRequest.resourceSpans[]")));
@@ -61,8 +137,9 @@ public class OtlpTraceController {
                 if (!spanList.isArray()) continue;
                 for (JsonNode raw : spanList) {
                     try {
-                        TraceSpanResponse saved = TraceSpanResponse.from(
-                                spans.ingest(agentId, toRequest(raw, resourceAttributes)), mapper);
+                        var persisted = spans.ingest(agentId, toRequest(raw, resourceAttributes));
+                        runHistory.recordSpan(agentId, persisted);
+                        TraceSpanResponse saved = TraceSpanResponse.from(persisted, mapper);
                         stream.publish(agentId, saved);
                         accepted++;
                     } catch (Exception error) {
@@ -110,7 +187,7 @@ public class OtlpTraceController {
             case "5", "SPAN_KIND_CONSUMER" -> "CONSUMER";
             default -> "INTERNAL";
         };
-        String runId = firstText(attributes, "ownagent.run.id", "session.id", "conversation.id");
+        String runId = firstText(attributes, "ownagent.run.id");
         String usageSource = input != null || output != null || total != null ? "PROVIDER" : "MISSING";
         return new IngestTraceSpanRequest(traceId, spanId, blankToNull(text(span, "parentSpanId")),
                 runId, name, kind, status, start, end, input, output, total, usageSource, attributes);

@@ -1,8 +1,21 @@
 # OwnAgent Python SDK
 
-Early developer preview of the OwnAgent Action Runtime client and Local Python Worker.
+Python SDK for sending real Agent execution traces to OwnAgent and, optionally, using its Action Runtime and Local Worker. The tracing client is a side channel: your Agent continues to call its existing model provider directly.
 
 The SDK can create and inspect Actions, register tool metadata with a separate developer key, and run explicitly registered Python functions on a developer-controlled machine. The Worker does not download or execute code supplied by the server.
+
+## Provision an Agent API key
+
+The current preview provisions an Agent key through the backend bootstrap configuration; key creation is not yet exposed as a self-service Studio screen. Choose an existing Agent ID from the Studio Agent list, generate a key, and configure these Spring Boot environment variables before starting the backend:
+
+```bash
+export APP_SECURITY_BOOTSTRAP_AGENT_ID="your-existing-agent-id"
+export APP_SECURITY_BOOTSTRAP_AGENT_API_KEY="oa_live_$(openssl rand -hex 32)"
+```
+
+Keep the generated raw key in your secret manager or local environment. The backend stores only its SHA-256 hash. The bootstrap key is associated with the configured Agent and is rotated when you change the configured raw value and restart the backend. Do not commit it to source control.
+
+Once provisioned, use the raw key as `OWNAGENT_AGENT_API_KEY` in the external Agent process. The same Agent key scopes trace ingestion and reads to that Agent.
 
 ## Install
 
@@ -20,6 +33,89 @@ python -m pip install -e ".[dev]"
 pytest
 ruff check src tests examples
 ```
+
+## Quick start: observe your own Agent
+
+Use the SDK as a side-channel observer. It does not proxy or replace your model client. Wrap one Agent execution in `agent_run()`, then wrap each real model call and tool execution in child spans:
+
+```python
+from ownagent import OwnAgentClient
+
+with OwnAgentClient(BASE_URL, AGENT_API_KEY) as ownagent:
+    with ownagent.agent_run("customer-support", session_id="conversation-123") as run:
+        with run.span("llm.chat.completions", span_kind="CLIENT") as model_span:
+            response = call_your_existing_model_client()
+            usage = response.usage  # use the actual provider response
+            model_span.set_usage(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+            )
+
+        with run.span("tool.lookup_order") as tool_span:
+            result = lookup_order(order_id="1024")
+```
+
+The SDK generates a trace ID and run ID, records a root execution span, and propagates the run ID and parent span context to nested spans. Pass a stable `session_id` to group multiple runs from the same conversation. Model requests still go directly to your configured provider. Prompt and response bodies are not captured unless you explicitly add them to attributes; content capture should remain opt-in and redacted.
+
+## Quick start: observe an external Agent
+
+The repository includes `examples/observability_agent.py`, a small OpenAI-compatible Agent that records one root Run, each real model request/response metadata, tool calls, and tool results. It does not route model traffic through OwnAgent.
+
+```bash
+export OWNAGENT_BASE_URL=http://localhost:8080
+export OWNAGENT_AGENT_API_KEY=oa_live_...
+export OPENAI_API_KEY=...
+export OPENAI_MODEL=...
+python examples/observability_agent.py
+```
+
+To group multiple runs under a stable conversation, also set `OWNAGENT_SESSION_ID`. To deliberately persist exact prompt messages, model responses, tool arguments, and tool results, explicitly opt in with `OWNAGENT_TRACE_CAPTURE_CONTENT=1`. Keep this disabled for normal use and redact sensitive data before sharing traces.
+
+## Automatic instrumentation with OpenInference
+
+If your Agent already uses the OpenAI Python SDK, OpenInference can create model spans automatically. The example exports standard OTLP/JSON directly to OwnAgent; it does not route model traffic through OwnAgent.
+
+Install the optional extras from this repository:
+
+```bash
+cd sdk/python
+python -m pip install -e ".[otel-json,openinference-openai]" "openai>=2.8"
+```
+
+Configure the endpoint and keys, then run the example:
+
+```bash
+export OWNAGENT_OTLP_ENDPOINT=http://localhost:8080/api/v1/otlp/v1/traces
+export OWNAGENT_AGENT_API_KEY=oa_live_...
+export OPENAI_API_KEY=...
+export OPENAI_MODEL=gpt-4.1-mini
+python examples/openinference_openai.py
+```
+
+The example places `ownagent.run.id` and `session.id` on the OpenTelemetry Resource so automatically created model spans are grouped into one OwnAgent Run. Prompt and response contents are hidden by default with OpenInference `TraceConfig`; set `OWNAGENT_TRACE_CAPTURE_CONTENT=1` only in a controlled, redacted test environment to opt in.
+
+OpenAI Agents SDK also has a dedicated optional extra and runnable example:
+
+```bash
+python -m pip install -e ".[otel-json,openinference-openai-agents]" "openai-agents>=0.11.0"
+python examples/openinference_openai_agents.py
+```
+
+MCP client/server context propagation is also available as an optional extra. It does not create spans by itself; combine it with an LLM/framework instrumentor and call it before creating MCP transports:
+
+```bash
+python -m pip install -e ".[otel-json,openinference-mcp]"
+```
+
+```python
+from openinference.instrumentation.mcp import MCPInstrumentor
+
+MCPInstrumentor().instrument()
+```
+
+This lets the active Agent trace context cross supported MCP transports so client and server spans can remain in one distributed trace. To have both sides appear under one Run in OwnAgent, configure both exporters with the same `ownagent.run.id` resource attribute; the MCP instrumentor propagates trace context, not Run identity by itself.
+
+For other frameworks, install the matching optional instrumentation package and use the same OTLP/JSON exporter. Available upstream instrumentors include LangChain, OpenAI Agents, LlamaIndex, CrewAI, Haystack, PydanticAI, and MCP. Their versions and framework compatibility are maintained upstream; OwnAgent consumes the resulting OpenTelemetry spans rather than vendoring each framework adapter.
 
 ## Quick start: run a local Python tool
 
@@ -152,7 +248,7 @@ A manual retry creates a new Action with a fresh idempotency key and re-evaluate
 
 This package currently lives in the backend monorepo under `sdk/python` so it can evolve against the API contract. It is independently installable from source but is not yet published to PyPI.
 
-See `examples/basic_agent.py`, `examples/local_worker.py`, and `examples/demo_agent.py`.
+See `examples/observability_agent.py`, `examples/basic_agent.py`, `examples/local_worker.py`, and `examples/demo_agent.py`.
 
 
 ## Trace ingestion API
