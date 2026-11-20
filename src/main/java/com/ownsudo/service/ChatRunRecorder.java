@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +20,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ChatRunRecorder {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
+    @Value("${ownagent.trace.capture-content:false}")
+    private String captureContentSetting = "false";
     private final ThreadLocal<RunContext> active = new ThreadLocal<>();
 
     public ChatRunRecorder(JdbcTemplate jdbc, ObjectMapper mapper) {
@@ -47,7 +50,11 @@ public class ChatRunRecorder {
                 "agentId", blankToNull(agentId) == null ? "" : agentId,
                 "model", model == null ? "" : model,
                 "provider", provider == null ? "" : provider));
-        recordEvent("USER_MESSAGE", "COMPLETED", Map.of("content", userPrompt == null ? "" : userPrompt));
+        Map<String, Object> userMessage = new LinkedHashMap<>();
+        boolean captureContent = isContentCaptureEnabled();
+        userMessage.put("captured", captureContent);
+        if (captureContent) userMessage.put("content", userPrompt == null ? "" : userPrompt);
+        recordEvent("USER_MESSAGE", "COMPLETED", userMessage);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("runId", runId);
         result.put("traceId", traceId);
@@ -172,6 +179,12 @@ public class ChatRunRecorder {
         recordEvent("RUN_FAILED", "ERROR", Map.of(
                 "errorType", error == null ? "Unknown" : error.getClass().getSimpleName(),
                 "message", error == null ? "Unknown execution error" : safeError(error)));
+    }
+
+    private boolean isContentCaptureEnabled() {
+        String setting = captureContentSetting == null ? "" : captureContentSetting.trim();
+        return "1".equals(setting) || "true".equalsIgnoreCase(setting)
+                || "yes".equalsIgnoreCase(setting) || "on".equalsIgnoreCase(setting);
     }
 
     public void clear() { active.remove(); }
