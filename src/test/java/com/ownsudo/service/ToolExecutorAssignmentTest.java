@@ -42,7 +42,7 @@ class ToolExecutorAssignmentTest {
 
         var result = executor.executeTool(
                 "calculate_expression",
-                "{\\"expression\\":\\"(18500 * 0.85) + 3200\\"}",
+                "{\"expression\":\"(18500 * 0.85) + 3200\"}",
                 1);
 
         assertTrue(result.isSuccess(), result.getErrorMessage());
@@ -78,7 +78,7 @@ class ToolExecutorAssignmentTest {
         Map<?, ?> properties = (Map<?, ?>) parameters.get("properties");
         assertTrue(properties.containsKey("code"));
 
-        var result = executor.executeTool("verify_tax_credit_code", "{\\"code\\":\\"123\\"}", 1);
+        var result = executor.executeTool("verify_tax_credit_code", "{\"code\":\"123\"}", 1);
 
         // The call must pass the pre-execution schema gate and reach the handler's
         // business validation, rather than being rejected for a different field name.
