@@ -86,4 +86,48 @@ class ToolExecutorAssignmentTest {
         assertEquals("INTERNAL_EXECUTION_ERROR", result.getErrorType());
         assertTrue(result.getErrorMessage().contains("18 位"));
     }
+
+    @Test
+    void preservesDecimalPrecisionForFinancialExpressions() {
+        ToolExecutor executor = new ToolExecutor();
+        executor.initStandardTools();
+
+        var result = executor.executeTool(
+                "calculate_expression",
+                "{\"expression\":\"0.1 + 0.2\"}",
+                1);
+
+        assertTrue(result.isSuccess(), result.getErrorMessage());
+        assertEquals("0.3", ((Map<?, ?>) result.getData()).get("value"));
+    }
+
+    @Test
+    void preservesLargeIntegersBeyondDoublePrecision() {
+        ToolExecutor executor = new ToolExecutor();
+        executor.initStandardTools();
+
+        var result = executor.executeTool(
+                "calculate_expression",
+                "{\"expression\":\"9007199254740993 + 1\"}",
+                1);
+
+        assertTrue(result.isSuccess(), result.getErrorMessage());
+        assertEquals("9007199254740994", ((Map<?, ?>) result.getData()).get("value"));
+    }
+
+    @Test
+    void rejectsDivisionByZero() {
+        ToolExecutor executor = new ToolExecutor();
+        executor.initStandardTools();
+
+        var result = executor.executeTool(
+                "calculate_expression",
+                "{\"expression\":\"1 / 0\"}",
+                1);
+
+        assertFalse(result.isSuccess());
+        assertEquals("INTERNAL_EXECUTION_ERROR", result.getErrorType());
+        assertTrue(result.getErrorMessage().contains("除数不能为零"));
+    }
+
 }
