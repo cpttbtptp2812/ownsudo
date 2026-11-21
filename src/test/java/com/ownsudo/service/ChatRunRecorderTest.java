@@ -30,6 +30,9 @@ class ChatRunRecorderTest {
         recorder.recordStep("model-call-1", 41, "llm", "DONE", "模型响应", "模型返回",
                 Map.of("usage", Map.of("prompt_tokens", 17, "completion_tokens", 9),
                         "model_response", Map.of("content", "真实模型结果", "reasoning_content", "must not persist")));
+        // Repeated completion updates for the same model span must not double-count provider usage.
+        recorder.recordStep("model-call-1", 41, "llm", "DONE", "模型响应更新", "重复事件不重复计费",
+                Map.of("usage", Map.of("prompt_tokens", 17, "completion_tokens", 9)));
         recorder.recordToolStart("call-1", "lookup_order", Map.of("orderId", "O-1"));
         recorder.recordToolResult("call-1", "lookup_order", true, 23,
                 Map.of("orderStatus", "shipped"), null);
@@ -50,5 +53,28 @@ class ChatRunRecorderTest {
         verify(jdbc).update(contains("SET status = ?"), updateArgs.capture());
         assertEquals(runId, updateArgs.getValue()[8]);
         assertEquals("PROVIDER", updateArgs.getValue()[6]);
+        assertEquals(17L, updateArgs.getValue()[3]);
+        assertEquals(9L, updateArgs.getValue()[4]);
+        assertEquals(26L, updateArgs.getValue()[5]);
     }
+
+    
+    @Test
+    void marksAbortedRunAsUnknownWithoutInventingTokenUsage() {
+        doReturn(1).when(jdbc).update(anyString(), any(Object[].class));
+
+        recorder.start("session-aborted", "agent-1", "Disconnect Demo",
+                "qwen-plus", "dashscope", "disconnect test");
+        recorder.complete(0, 0, false, "ABORTED");
+        recorder.clear();
+
+        ArgumentCaptor<Object[]> updateArgs = ArgumentCaptor.forClass(Object[].class);
+        verify(jdbc).update(contains("SET status = 'UNKNOWN'"), updateArgs.capture());
+        assertEquals("UNKNOWN", updateArgs.getValue()[0]);
+        assertEquals(null, updateArgs.getValue()[3]);
+        assertEquals(null, updateArgs.getValue()[4]);
+        assertEquals(null, updateArgs.getValue()[5]);
+        assertEquals("MISSING", updateArgs.getValue()[6]);
+    }
+
 }
