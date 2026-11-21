@@ -69,7 +69,7 @@ class ChatRunRecorderTest {
         recorder.clear();
 
         ArgumentCaptor<Object[]> updateArgs = ArgumentCaptor.forClass(Object[].class);
-        verify(jdbc).update(contains("SET status = 'UNKNOWN'"), updateArgs.capture());
+        verify(jdbc).update(contains("SET status = ?"), updateArgs.capture());
         assertEquals("UNKNOWN", updateArgs.getValue()[0]);
         assertEquals(null, updateArgs.getValue()[3]);
         assertEquals(null, updateArgs.getValue()[4]);
