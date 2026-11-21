@@ -176,23 +176,72 @@ public class AgentPlatformController {
     @GetMapping("/agents")
     public List<AgentEntity> getAgents() {
         List<AgentEntity> list = agentRepository.findAllByOrderByCreatedAtDesc();
-        int toolCount = (int) toolRepository.count();
+        int legacyToolCount = toolExecutor.getToolDefinitions().size();
         int kbCount = (int) knowledgeRepository.count();
-        for (AgentEntity a : list) {
-            if (a.getToolsCount() == null || a.getToolsCount() == 0) {
-                a.setToolsCount(toolCount);
+        for (AgentEntity agent : list) {
+            if (agent.getSelectedToolsJson() == null || agent.getSelectedToolsJson().isBlank()) {
+                agent.setToolsCount(legacyToolCount);
+            } else {
+                try {
+                    Set<?> selected = objectMapper.readValue(agent.getSelectedToolsJson(),
+                            objectMapper.getTypeFactory().constructCollectionType(Set.class, String.class));
+                    agent.setToolsCount(selected.size());
+                } catch (Exception ignored) {
+                    agent.setToolsCount(0);
+                }
             }
-            if (a.getKbCount() == null || a.getKbCount() == 0) {
-                a.setKbCount(kbCount);
-            }
+            if (agent.getKbCount() == null || agent.getKbCount() == 0) agent.setKbCount(kbCount);
         }
         return list;
+    }
+
+    @GetMapping("/agents/available-tools")
+    public List<Map<String, Object>> getAvailableAgentTools() {
+        List<Map<String, Object>> result = new ArrayList<>();
+        Set<String> disabledTools = toolRepository.findAll().stream()
+                .filter(tool -> !Boolean.TRUE.equals(tool.getEnabled()))
+                .map(McpTool::getFunctionName).filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        for (Map<String, Object> definition : toolExecutor.getToolDefinitions()) {
+            Object function = definition.get("function");
+            if (!(function instanceof Map<?, ?> details)) continue;
+            Object name = details.get("name");
+            if (name == null || name.toString().isBlank() || disabledTools.contains(name.toString())) continue;
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("name", name.toString());
+            Object description = details.get("description");
+            item.put("description", description == null ? "" : description.toString());
+            result.add(item);
+        }
+        return result;
     }
 
     @PostMapping("/agents")
     public AgentEntity saveAgent(@RequestBody AgentEntity agent) {
         if (agent.getId() == null || agent.getId().trim().isEmpty()) {
             agent.setId("agent-" + UUID.randomUUID().toString().substring(0, 8));
+        }
+        if (agent.getSelectedToolsJson() != null && !agent.getSelectedToolsJson().isBlank()) {
+            try {
+                Set<String> selected = objectMapper.readValue(agent.getSelectedToolsJson(),
+                        objectMapper.getTypeFactory().constructCollectionType(LinkedHashSet.class, String.class));
+                Set<String> disabled = toolRepository.findAll().stream()
+                        .filter(tool -> !Boolean.TRUE.equals(tool.getEnabled()))
+                        .map(McpTool::getFunctionName).filter(Objects::nonNull)
+                        .collect(java.util.stream.Collectors.toSet());
+                Set<String> available = toolExecutor.getToolDefinitions().stream()
+                        .map(definition -> (Map<?, ?>) definition.get("function"))
+                        .filter(Objects::nonNull).map(details -> String.valueOf(details.get("name")))
+                        .filter(name -> !disabled.contains(name))
+                        .collect(java.util.stream.Collectors.toSet());
+                if (!available.containsAll(selected)) throw new IllegalArgumentException("Agent contains unknown or disabled tool names");
+                agent.setSelectedToolsJson(objectMapper.writeValueAsString(selected));
+                agent.setToolsCount(selected.size());
+            } catch (IllegalArgumentException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IllegalArgumentException("selectedToolsJson must be a JSON string array", e);
+            }
         }
         return agentRepository.save(agent);
     }
@@ -269,6 +318,11 @@ public class AgentPlatformController {
         String dbModel = null;
         String dbSystemPrompt = null;
         Double dbTemperature = null;
+        AtomicReference<Set<String>> allowedToolNames = new AtomicReference<>(null);
+        Set<String> disabledToolNames = toolRepository.findAll().stream()
+                .filter(tool -> !Boolean.TRUE.equals(tool.getEnabled()))
+                .map(McpTool::getFunctionName).filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
         String agentName = "ownagent 调度中枢";
 
         if (agentId != null && !agentId.isBlank()) {
@@ -279,6 +333,15 @@ public class AgentPlatformController {
                 dbModel = a.getModel();
                 dbSystemPrompt = a.getSystemPrompt();
                 dbTemperature = a.getTemperature();
+                if (a.getSelectedToolsJson() != null && !a.getSelectedToolsJson().isBlank()) {
+                    try {
+                        allowedToolNames.set(objectMapper.readValue(a.getSelectedToolsJson(),
+                                objectMapper.getTypeFactory().constructCollectionType(LinkedHashSet.class, String.class)));
+                    } catch (Exception invalidSelection) {
+                        log.warn("Agent {} has invalid selected tool configuration; disabling tools for this run", agentId, invalidSelection);
+                        allowedToolNames.set(Collections.emptySet());
+                    }
+                }
             }
         }
 
@@ -840,7 +903,12 @@ public class AgentPlatformController {
                 }
 
                 int currentDepth = 1;
-                List<Map<String, Object>> toolDefs = toolExecutor.getToolDefinitions();
+                List<Map<String, Object>> toolDefs = toolExecutor.getToolDefinitions(allowedToolNames.get()).stream()
+                        .filter(definition -> {
+                            Object function = definition.get("function");
+                            return function instanceof Map<?, ?> details
+                                    && !disabledToolNames.contains(String.valueOf(details.get("name")));
+                        }).toList();
                 int totalToolsExecuted = 0;
                 boolean hasPendingApproval = false;
                 Map<String, Object> pendingApprovalData = null;
@@ -965,6 +1033,12 @@ public class AgentPlatformController {
                                     long toolStart = System.currentTimeMillis();
                                     ToolExecutor.ToolExecutionResult toolResult;
                                     try {
+                                        if (allowedToolNames.get() != null && !allowedToolNames.get().contains(functionName)) {
+                                            throw new SecurityException("该 Agent 未绑定工具：" + functionName);
+                                        }
+                                        if (disabledToolNames.contains(functionName)) {
+                                            throw new SecurityException("工具已在工具管理中停用：" + functionName);
+                                        }
                                         toolResult = toolExecutor.executeTool(functionName, functionArgs, currentDepth);
                                     } catch (RuntimeException toolError) {
                                         long failedDuration = System.currentTimeMillis() - toolStart;

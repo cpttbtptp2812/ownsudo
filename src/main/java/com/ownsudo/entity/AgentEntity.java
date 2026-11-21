@@ -35,6 +35,9 @@ public class AgentEntity {
     @Column(name = "tools_count")
     private Integer toolsCount = 0;
 
+    @Column(name = "selected_tools_json", columnDefinition = "LONGTEXT")
+    private String selectedToolsJson;
+
     @Column(name = "kb_count")
     private Integer kbCount = 0;
 
@@ -86,6 +89,9 @@ public class AgentEntity {
 
     public Integer getToolsCount() { return toolsCount != null ? toolsCount : 0; }
     public void setToolsCount(Integer toolsCount) { this.toolsCount = toolsCount; }
+
+    public String getSelectedToolsJson() { return selectedToolsJson; }
+    public void setSelectedToolsJson(String selectedToolsJson) { this.selectedToolsJson = selectedToolsJson; }
 
     public Integer getKbCount() { return kbCount != null ? kbCount : 0; }
     public void setKbCount(Integer kbCount) { this.kbCount = kbCount; }

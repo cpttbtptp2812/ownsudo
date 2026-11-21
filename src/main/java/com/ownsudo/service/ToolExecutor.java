@@ -146,8 +146,9 @@ public class ToolExecutor {
                 throw new IllegalArgumentException("表达式不能为空");
             }
             try {
-                double val = evaluateSimpleMath(expr);
-                BigDecimal bd = new BigDecimal(val, MathContext.DECIMAL64).setScale(4, RoundingMode.HALF_UP).stripTrailingZeros();
+                BigDecimal bd = evaluateSimpleMath(expr)
+                        .setScale(4, RoundingMode.HALF_UP)
+                        .stripTrailingZeros();
                 Map<String, Object> res = new LinkedHashMap<>();
                 res.put("expression", expr);
                 res.put("value", bd.toPlainString());
@@ -280,53 +281,96 @@ public class ToolExecutor {
         });
     }
 
-    private double evaluateSimpleMath(String expr) {
+    private BigDecimal evaluateSimpleMath(String expr) {
         String clean = expr.replaceAll("\\s+", "");
         return new Object() {
-            int pos = -1, ch;
-            void nextChar() { ch = (++pos < clean.length()) ? clean.charAt(pos) : -1; }
+            int pos = -1;
+            int ch;
+
+            void nextChar() {
+                ch = (++pos < clean.length()) ? clean.charAt(pos) : -1;
+            }
+
             boolean eat(int charToEat) {
-                while (ch == ' ') nextChar();
-                if (ch == charToEat) { nextChar(); return true; }
+                if (ch == charToEat) {
+                    nextChar();
+                    return true;
+                }
                 return false;
             }
-            double parse() {
+
+            BigDecimal parse() {
                 nextChar();
-                double x = parseExpression();
-                if (pos < clean.length()) throw new RuntimeException("未知字符: " + (char)ch);
-                return x;
+                if (clean.isEmpty()) {
+                    throw new IllegalArgumentException("表达式不能为空");
+                }
+                BigDecimal value = parseExpression();
+                if (pos < clean.length()) {
+                    throw new IllegalArgumentException("未知字符: " + (char) ch);
+                }
+                return value;
             }
-            double parseExpression() {
-                double x = parseTerm();
+
+            BigDecimal parseExpression() {
+                BigDecimal value = parseTerm();
                 for (;;) {
-                    if      (eat('+')) x += parseTerm();
-                    else if (eat('-')) x -= parseTerm();
-                    else return x;
+                    if (eat('+')) {
+                        value = value.add(parseTerm(), MathContext.DECIMAL128);
+                    } else if (eat('-')) {
+                        value = value.subtract(parseTerm(), MathContext.DECIMAL128);
+                    } else {
+                        return value;
+                    }
                 }
             }
-            double parseTerm() {
-                double x = parseFactor();
+
+            BigDecimal parseTerm() {
+                BigDecimal value = parseFactor();
                 for (;;) {
-                    if      (eat('*')) x *= parseFactor();
-                    else if (eat('/')) x /= parseFactor();
-                    else return x;
+                    if (eat('*')) {
+                        value = value.multiply(parseFactor(), MathContext.DECIMAL128);
+                    } else if (eat('/')) {
+                        BigDecimal divisor = parseFactor();
+                        if (divisor.compareTo(BigDecimal.ZERO) == 0) {
+                            throw new ArithmeticException("除数不能为零");
+                        }
+                        value = value.divide(divisor, MathContext.DECIMAL128);
+                    } else {
+                        return value;
+                    }
                 }
             }
-            double parseFactor() {
+
+            BigDecimal parseFactor() {
                 if (eat('+')) return parseFactor();
-                if (eat('-')) return -parseFactor();
-                double x;
-                int startPos = this.pos;
+                if (eat('-')) return parseFactor().negate();
+
                 if (eat('(')) {
-                    x = parseExpression();
-                    eat(')');
-                } else if ((ch >= '0' && ch <= '9') || ch == '.') {
-                    while ((ch >= '0' && ch <= '9') || ch == '.') nextChar();
-                    x = Double.parseDouble(clean.substring(startPos, this.pos));
-                } else {
-                    throw new RuntimeException("无法解析因子: " + (char)ch);
+                    BigDecimal value = parseExpression();
+                    if (!eat(')')) {
+                        throw new IllegalArgumentException("缺少右括号");
+                    }
+                    return value;
                 }
-                return x;
+
+                int start = pos;
+                boolean decimalPointSeen = false;
+                boolean digitSeen = false;
+                while ((ch >= '0' && ch <= '9') || ch == '.') {
+                    if (ch == '.') {
+                        if (decimalPointSeen) {
+                            throw new IllegalArgumentException("数字包含多个小数点");
+                        }
+                        decimalPointSeen = true;
+                    } else {
+                        digitSeen = true;
+                    }
+                    nextChar();
+                }
+                if (!digitSeen) {
+                    throw new IllegalArgumentException("无法解析数字或运算符: " + (char) ch);
+                }
+                return new BigDecimal(clean.substring(start, pos));
             }
         }.parse();
     }
@@ -361,11 +405,11 @@ public class ToolExecutor {
                 }
                 break;
             case "verify_tax_credit_code":
-                if (!params.containsKey("creditCode") || params.get("creditCode") == null) {
-                    return "缺少必填参数 [creditCode]";
+                if (!params.containsKey("code") || params.get("code") == null) {
+                    return "缺少必填参数 [code]";
                 }
-                if (!(params.get("creditCode") instanceof String) || ((String) params.get("creditCode")).trim().isEmpty()) {
-                    return "参数 [creditCode] 类型必须为非空社会信用代码字符串";
+                if (!(params.get("code") instanceof String) || ((String) params.get("code")).trim().isEmpty()) {
+                    return "参数 [code] 类型必须为非空社会信用代码字符串";
                 }
                 break;
         }
@@ -415,6 +459,10 @@ public class ToolExecutor {
     }
 
     public List<Map<String, Object>> getToolDefinitions() {
+        return getToolDefinitions(null);
+    }
+
+    public List<Map<String, Object>> getToolDefinitions(Set<String> allowedNames) {
         List<Map<String, Object>> list = new ArrayList<>();
 
         // 1. query_enterprise_db
@@ -532,6 +580,14 @@ public class ToolExecutor {
             )
         ));
 
+        if (allowedNames != null) {
+            list.removeIf(definition -> {
+                Object function = definition.get("function");
+                if (!(function instanceof Map<?, ?> details)) return true;
+                Object name = details.get("name");
+                return name == null || !allowedNames.contains(name.toString());
+            });
+        }
         return list;
     }
 
