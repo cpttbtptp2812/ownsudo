@@ -361,11 +361,11 @@ public class ToolExecutor {
                 }
                 break;
             case "verify_tax_credit_code":
-                if (!params.containsKey("creditCode") || params.get("creditCode") == null) {
-                    return "缺少必填参数 [creditCode]";
+                if (!params.containsKey("code") || params.get("code") == null) {
+                    return "缺少必填参数 [code]";
                 }
-                if (!(params.get("creditCode") instanceof String) || ((String) params.get("creditCode")).trim().isEmpty()) {
-                    return "参数 [creditCode] 类型必须为非空社会信用代码字符串";
+                if (!(params.get("code") instanceof String) || ((String) params.get("code")).trim().isEmpty()) {
+                    return "参数 [code] 类型必须为非空社会信用代码字符串";
                 }
                 break;
         }
